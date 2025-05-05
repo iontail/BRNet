@@ -215,6 +215,7 @@ def load_models():
 if __name__ == '__main__':
 
     ''' Parameters '''
+    ## test ##
 
     USE_MULTI_SCALE = True
     MY_SHRINK = 1
