@@ -9,7 +9,7 @@ from models.modules.l2norm import L2Norm
 from bioreflectnet.models.layers.DSFD_basic_modules import DistillKL, fem_module, add_extras
 from bioreflectnet.models.functions.detection import Detect
 from models.modules.priorbox import PriorBox
-from bioreflectnet.models.BRNet import Bio_ReflectNet
+from bioreflectnet.models.BRNet import BRNet
 
 
 class DSFD(nn.Module):
@@ -70,15 +70,8 @@ class DSFD(nn.Module):
         # and use larger sizes in the second shot." from DSFD - https://arxiv.org/pdf/1512.02325.pdf'
         ##############################
         # the reflectance decoding branch
-        """
-        self.ref1 = nn.Conv2d(64, 64, kernel_size=3, padding=1) # for semi-orthogonal regularity loss
-        self.ref2 = nn.Sequential(
-            nn.ReLU(inplace=True),
-            Interpolate(2),
-            nn.Conv2d(64, 3, kernel_size=3, padding=1),
-            nn.Sigmoid()
-        )
-        """
+        
+        
 
         self.KL = DistillKL(T=4.0)
 

@@ -124,7 +124,7 @@ class BRNet(nn.Module):
             for id in self.stage_id:
                 for i in id:
                     if self.layers[i].__class__.__name__ == 'Photoreceptor_Block':
-                        x = self.layers[i](x, darkness_level = darklevel, reflectance = ref)
+                        x = self.layers[i](x, darkness_level = darklevel.detach(), reflectance = ref.detach())
                     else:
                         x = self.layers[i](x)
 

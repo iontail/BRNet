@@ -68,7 +68,8 @@ class Rod_Block(nn.Module):
                  activation = 'relu',
                  normalize = 'bn',
                  downsample = False,
-                 down = 1):
+                 down = 1,
+                 cfg = None):
         
         super(Rod_Block, self).__init__()
 
@@ -82,9 +83,14 @@ class Rod_Block(nn.Module):
         self.bn2 = str_to_norm[normalize](out_dim)
 
 
-        mid_dim = in_dim // reduction
+        # GAIN이랑 TAPETUM을 모두 사용하지 않는 경우에는 mid_dim을 out_dim으로 설정해서 차원 맞춰줌
+        if cfg.ABLATION.USE_GAIN or cfg.ABLATION.USE_TAPETUM:
+            mid_dim = in_dim // reduction
+        else:
+            mid_dim = out_dim
 
-        self.gain = GainBlock(in_dim, mid_dim, activation = self.activation)
+
+        self.gain = GainBlock(in_dim, out_dim, activation = self.activation)
         self.tapetum = ReflectiveFeedback(mid_dim, activation = self.activation) # problems: mid_dim??
         self.dcn = DCNv3(mid_dim, out_dim, kernel_size = 3, padding = 1, stride = 1)
         self.conv = nn.Conv2d(out_dim, out_dim, kernel_size = 3, padding = 1) #problems: kernel_size = 3?
