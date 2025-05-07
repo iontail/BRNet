@@ -40,6 +40,14 @@ _C.LR_STEPS = (10000*2,12500*2,15000*2)
 _C.MAX_STEPS = 150000
 _C.EPOCHES = 100
 
+# model config
+_C.MODEL_NAME = 'BRNet'
+_C.PRETRAINED = False
+_C.ACTIVATION = 'relu'
+_C.NORMALIZE = 'bn' # 'bn' or 'gn' or None if do not want to use normalization
+_C.REDCUTION = 2
+
+
 # anchor config
 _C.FEATURE_MAPS = [160, 80, 40, 20, 10, 5]
 _C.INPUT_SIZE = 640

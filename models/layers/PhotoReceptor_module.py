@@ -166,6 +166,20 @@ class Photoreceptor_Block(nn.Module):
     PhotoreceptorModule:
       - RodPath & ConePath 병렬 처리
       - darkness_level(0~1)에 따라 가중합
+
+      args:
+        in_dim       : input channel
+        out_dim      : output channel
+        normalize    : normalization layer (bn, ln)
+        activation    : activation function (relu, gelu)
+        downsample   : downsample or not
+        reduction    : reduction ratio for mid_dim
+        down         : downsample ratio for the input feature map
+        downsample   : downsample or not
+        down         : downsample ratio for the input feature map
+
+    returns:
+        out          : [B, C, H, W] feature map
     """
     def __init__(
             self,
@@ -233,7 +247,7 @@ if __name__ == '__main__':
     device = torch.device('cpu')
     batch = 2
     res = 512
-    detector = Photoreceptor_ResNet_Block(3, 10, reduction = 2, stride = 1).to(device)
+    detector = Photoreceptor_Block(3, 10, normalize = 'bn', activation = 'relu', downsample = False, down = 1).to(device)
     
     img = torch.randn(batch, 3, res, res).to(device)
     darkness_level = torch.randn(batch, 1, 1, 1).to(device)

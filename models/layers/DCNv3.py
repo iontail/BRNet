@@ -5,18 +5,15 @@ from einops import rearrange
 
 class DCNv3(nn.Module):
     """
-        Reference code url: https://github.com/Chenfeng1271/Adaptive-deformable-convolution/blob/master/modeling/deformable_conv/deform_conv_v3.py
+    Reference code url: https://github.com/Chenfeng1271/Adaptive-deformable-convolution/blob/master/modeling/deformable_conv/deform_conv_v3.py
         Args:
 
         modulation          # If True, Modulated Deformable Convolution (DCN v2)
 
         this class support kernel size with 3 and 1 only.
-        """
-    def __init__(self, in_channels, out_channels, kernel_size = 3, padding = 1, stride = 1, dilation = 2,
-                 bias = None, modulation = True, adaptive_d = True):
-        
-        
-
+    """
+    def __init__(self, in_channels, out_channels, kernel_size=3, padding=1, stride=1, dilation=2,
+                 bias=None, modulation=True, adaptive_d=True):
         super(DCNv3, self).__init__()
 
         self.in_channels = in_channels
@@ -29,73 +26,53 @@ class DCNv3(nn.Module):
         self.modulation = modulation
 
         self.zero_padding = nn.ZeroPad2d(padding)
-        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size = kernel_size, stride = kernel_size, bias = bias)
+        self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=kernel_size, stride=kernel_size, bias=bias)
 
-        #Kernel의 각 포인트(K^2)마다 x & y에 대한 값 (2*)
-        self.p_conv = nn.Conv2d(in_channels, 2*kernel_size**2, kernel_size = 3, padding = 1, stride = stride)
+        # Kernel의 각 포인트(K^2)마다 x & y에 대한 값 (2*)
+        self.p_conv = nn.Conv2d(in_channels, 2 * kernel_size**2, kernel_size=3, padding=1, stride=stride)
         nn.init.constant_(self.p_conv.weight, 0)
         nn.init.constant_(self.p_conv.bias, 0)
 
-        #backward시에 커스텀한 함수나 레이어를 실행시킬 수 있도록 하는 ordered dict인 hook에 등록
         # offset에 대해서는 learning rate의 0.1배로 학습
-        self.p_conv.register_full_backward_hook(self._set_lr)
+        self.p_conv.weight.register_hook(lambda grad: grad * 0.1)
+        self.p_conv.bias.register_hook(lambda grad: grad * 0.1)
 
-        ##############
-    
         if self.modulation:
             # depth-wise weight를 주기 위한 modulation scalar
-            self.m_conv = nn.Conv2d(in_channels, kernel_size*kernel_size, kernel_size=3, padding=1, stride=stride, bias = False)
+            self.m_conv = nn.Conv2d(in_channels, kernel_size * kernel_size, kernel_size=3, padding=1, stride=stride, bias=False)
             nn.init.constant_(self.m_conv.weight, 0.5)
-            self.m_conv.register_full_backward_hook(self._set_lr)
+            self.m_conv.weight.register_hook(lambda grad: grad * 0.1)
 
         if self.adaptive_d:
-            self.ad_conv = nn.Conv2d(in_channels, kernel_size, kernel_size = 3, padding = 1, stride = stride, bias = False)
+            self.ad_conv = nn.Conv2d(in_channels, kernel_size, kernel_size=3, padding=1, stride=stride, bias=False)
             nn.init.constant_(self.ad_conv.weight, 1)
-            self.ad_conv.register_full_backward_hook(self._set_lr)
-        
-
-
-    @staticmethod
-    def _set_lr(self, grad_input, grad_output):
-        grad_input = tuple(grad * 0.1 for grad in grad_input)
-        grad_output = tuple(grad * 0.1 for grad in grad_output)
-
-        # return하게 되면 그 아래 레이어에도 0.1배된 gradient가 전달되므로 return x
-        # 근데 맞는지는 모르겠다
-
+            self.ad_conv.weight.register_hook(lambda grad: grad * 0.1)
 
     def forward(self, x):
-        offset = self.p_conv(x) # output shape: (B, 2 * K^2, H, W)
+        offset = self.p_conv(x)  # output shape: (B, 2 * K^2, H, W)
 
-
-        # -----------------------
         # Adaptive dilation 처리
-        # -----------------------
         if self.adaptive_d:
-            ad_base = self.ad_conv(x) # outpus shape: (B, K, H, W)
+            ad_base = self.ad_conv(x)  # output shape: (B, K, H, W)
             ad_base = 1 - torch.sigmoid(ad_base)
-            ad = ad_base.repeat(1, 2 * self.kernel_size, 1, 1) * self.dilation # output shape: (B, 2 * K^2, H, W)
+            ad = ad_base.repeat(1, 2 * self.kernel_size, 1, 1) * self.dilation  # output shape: (B, 2 * K^2, H, W)
 
-            ad_m = (ad_base - 0.5) * 2 # -1 ~ 1 범위로 변환
-            ad_m = ad_m.repeat(1, self.kernel_size, 1, 1) * self.dilation # output shape: (B, K^2, H, W)
+            ad_m = (ad_base - 0.5) * 2  # -1 ~ 1 범위로 변환
+            ad_m = ad_m.repeat(1, self.kernel_size, 1, 1) * self.dilation  # output shape: (B, K^2, H, W)
 
             self.ad_m = ad_m.detach()
 
-
-        # -----------------------
-        # modulation 처리
-        # -----------------------
-        if self.modulation: # Normalizing modulation scalr
-            m = torch.sigmoid(self.m_conv(x)) # output shape: (B, K^2, H, W)
+        # Modulation 처리
+        if self.modulation:
+            m = torch.sigmoid(self.m_conv(x))  # output shape: (B, K^2, H, W)
 
         dtype = offset.data.type()
-        ks = self.kernel_size 
-        N = offset.size(1) // 2 # N = K^2 (Deformable Conv에서 x, y, 오프셋이 각각 K^2개 필요 => channels 수는 2 * K^2)
+        ks = self.kernel_size
+        N = offset.size(1) // 2  # N = K^2
 
         # 필요시 zero-padding
         if self.padding:
             x = self.zero_padding(x)
-
 
         # Adaptive_d가 True이면 오프셋에 ad를 곱한 결과를 구한다
         if self.adaptive_d:
@@ -103,117 +80,60 @@ class DCNv3(nn.Module):
         else:
             p = self._get_p(offset, dtype, None)
 
-        
-        # contiguous(): 배열의 값들을 메모리 상에서 연속적으로 만들기 위한 method (https://aigong.tistory.com/430)
-        p = p.contiguous().permute(0, 2, 3, 1) # shape: (B, H, W, 2N)
+        p = p.contiguous().permute(0, 2, 3, 1)  # shape: (B, H, W, 2N)
 
-        # -----------------------
-        # bilinear sampling 위한 좌표계산
-        # bilinear interpolation이 궁금한 분은 오른쪽 링크에서 확인: https://blog.naver.com/aorigin/220947541918
-        # lt: Left Top / rb: Right Bottom
-        # -----------------------
-
-        #대각 꼭짓점 구하기 왼족 위 & 오른쪽 아래
-        q_lt = torch.Tensor(p.data).floor()
+        # Bilinear interpolation 위한 좌표 계산
+        q_lt = torch.floor(p)
         q_rb = q_lt + 1
 
-        # clamp를 통헤서 [min, max] 사이에 오도록 clampping
         self.q_lt = torch.cat([
             torch.clamp(q_lt[..., :N], 0, x.size(2) - 1),
             torch.clamp(q_lt[..., N:], 0, x.size(3) - 1)
-            ], dim = -1).long()
+        ], dim=-1).long()
 
         self.q_rb = torch.cat([
             torch.clamp(q_rb[..., :N], 0, x.size(2) - 1),
             torch.clamp(q_rb[..., N:], 0, x.size(3) - 1)
-            ], dim = -1).long()
-        
-        # 나머지 lb & rt는 이미 구한 lt와 rb의 x, y좌표를 교차
+        ], dim=-1).long()
+
         self.q_lb = torch.cat([self.q_lt[..., :N], self.q_rb[..., N:]], -1)
         self.q_rt = torch.cat([self.q_rb[..., :N], self.q_lt[..., N:]], -1)
 
-
-        # 이미지 넘어가는 좌표 mask
-        mask = torch.cat([
-            p[..., :N].lt(self.padding) + p[..., :N].gt(x.size(2) - 1 - self.padding),
-            p[..., N:].lt(self.padding) + p[..., N:].gt(x.size(3) - 1 - self.padding)
-        ], dim = -1).type_as(p)
-        mask = mask.detach() # gradient 흐르지 않게
-
-        self.mask = mask.detach()
-
-        # p가 범위를 넘어갔을 때는 floor_p로 대체
-        #floor_p = p - (p - torch.floor(p))
-        floor_p = torch.floor(p)
-        p = p * (1 - mask) + floor_p * mask
-
-        # 최종 clamp
-        p = torch.cat([
-            torch.clamp(p[..., :N], 0, x.size(2) - 1),
-            torch.clamp(p[..., N:], 0, x.size(3) - 1)
-        ], dim = -1)
-
-        self.p = p.detach()
-
-        # -----------------------
-        # binear interpolation weight
-        # -----------------------
+        # Bilinear interpolation weights
         g_lt = (1 + (self.q_lt[..., :N].type_as(p) - p[..., :N])) * \
-            (1 + (self.q_lt[..., N:].type_as(p) - p[..., N:]))
-
+               (1 + (self.q_lt[..., N:].type_as(p) - p[..., N:]))
         g_rb = (1 - (self.q_rb[..., :N].type_as(p) - p[..., :N])) * \
-           (1 - (self.q_rb[..., N:].type_as(p) - p[..., N:]))
-        
+               (1 - (self.q_rb[..., N:].type_as(p) - p[..., N:]))
         g_lb = (1 + (self.q_lb[..., :N].type_as(p) - p[..., :N])) * \
-           (1 - (self.q_lb[..., N:].type_as(p) - p[..., N:]))
-        
+               (1 - (self.q_lb[..., N:].type_as(p) - p[..., N:]))
         g_rt = (1 - (self.q_rt[..., :N].type_as(p) - p[..., :N])) * \
-           (1 + (self.q_rt[..., N:].type_as(p) - p[..., N:]))
-        
+               (1 + (self.q_rt[..., N:].type_as(p) - p[..., N:]))
 
-        # -----------------------
-        # 4 pixel interpolation
-        # -----------------------
-        #self._get_x_q: 실제로 (q_*) 좌표에서 x의 픽셀값을 샘플링
-        x_q_lt = self._get_x_q(x, self.q_lt, N) # (B, C, H, W, N)
+        # 4-pixel interpolation
+        x_q_lt = self._get_x_q(x, self.q_lt, N)
         x_q_rb = self._get_x_q(x, self.q_rb, N)
         x_q_lb = self._get_x_q(x, self.q_lb, N)
         x_q_rt = self._get_x_q(x, self.q_rt, N)
 
-        # result of bilinear interpolation
-        # 각 채널간에는 똑같은 offset 적용
         x_offset = (
-            g_lt.unsqueeze(dim = 1) * x_q_lt +
-            g_rb.unsqueeze(dim = 1) * x_q_rb +
-            g_lb.unsqueeze(dim = 1) * x_q_lb +
-            g_rt.unsqueeze(dim = 1) * x_q_rt 
+            g_lt.unsqueeze(dim=1) * x_q_lt +
+            g_rb.unsqueeze(dim=1) * x_q_rb +
+            g_lb.unsqueeze(dim=1) * x_q_lb +
+            g_rt.unsqueeze(dim=1) * x_q_rt
         )
 
-        # -----------------------
-        # modulation 적용
-        # -----------------------
+        # Modulation 적용
         if self.modulation:
             if self.adaptive_d:
                 m = m * ad_m
 
-            # m: (B, H, W, K^2) 형태가 되도록 Permute
-            m = m.contiguous().permute(0, 2, 3, 1)
-            m = m.unsqueeze(dim = 1) # (B, 1, H, W, K^2)
-
+            m = m.contiguous().permute(0, 2, 3, 1).unsqueeze(dim=1)
             self.m = m.detach()
-
-            # x_offset 채널 개수만큼 broadcast
-            m = torch.cat([m for _ in range(x_offset.size(1))], dim = 1)
-
-            # 최종적으로 x_offset에 곱해서 위치별 weight 조정
+            m = torch.cat([m for _ in range(x_offset.size(1))], dim=1)
             x_offset *= m
 
-
-        # -----------------------
         # 최종 Conv
-        # -----------------------
-        # (B, C, H, W, K^2) -> (B, C x K^2, H, W)
-        x_offset = self._reshape_x_offset(x_offset, ks) 
+        x_offset = self._reshape_x_offset(x_offset, ks)
         out = self.conv(x_offset)
 
         return out
@@ -403,3 +323,9 @@ class DCNv3(nn.Module):
 
 
 
+if __name__ == "__main__":
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = DCNv3(in_channels=3, out_channels=64, kernel_size=3, stride=1, padding=1).to(device)
+    x = torch.randn(1, 3, 32, 32).to(device)
+    output = model(x)
+    print("Output shape:", output.shape)

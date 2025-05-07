@@ -9,7 +9,7 @@ from models.modules.l2norm import L2Norm
 from bioreflectnet.models.layers.DSFD_basic_modules import DistillKL, fem_module, add_extras
 from bioreflectnet.models.functions.detection import Detect
 from models.modules.priorbox import PriorBox
-from models.Bio_ReflectNet_Module import Bio_ReflectNet
+from bioreflectnet.models.BRNet import Bio_ReflectNet
 
 
 class DSFD(nn.Module):
