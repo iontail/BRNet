@@ -8,7 +8,7 @@ from data.config import cfg
 
 class BRNet(nn.Module):
     """
-    Bio-reflect Network (BRNet) -> Bio-Receptor Network??
+    Bio-reflect Net work (BRNet) -> Bio-Receptor Network??
     Modified VGGNet
 
     Args:
@@ -22,21 +22,44 @@ class BRNet(nn.Module):
         super(BRNet, self).__init__()
         #self.config = [64, 64, 'M', 128, 128, 'M', 256, 256, 256, 'C', 512, 512, 512, 'M', 512, 512, 512, 'M']
         # Bio-Receptor module은 개당 가지고 있는 conv수가 많아서 config 변경
-        self.config = [64, 64, 'M', 128, 128, 'M', 256, 256, 'C', 512, 512, 'M', 512, 512, 'M']
+        self.layer_num_cfg = [64, 64, 'M', 128, 128, 
+                              'M', 256, 256, 
+                              'C', 512, 512, 
+                              'M', 512, 512, 
+                              'M'] # + Conv7 + ReLU /+ Conv8 + ReLU
 
-        self.stage_id = [[5, 6, 7, 8], [9, 10, 11], [12, 13, 14], [15, 16], [17, 18]] # index of each stage's layer
+        """
+        Check later index:
+        [0, 'Conv2d'] [1, 'BatchNorm2d'] [2, 'ReLU']
+        [3, 'Conv2d'] [4, 'BatchNorm2d'] [5, 'ReLU'] [6, 'MaxPool2d']
+
+        [7, 'Conv2d'] [8, 'BatchNorm2d'] [9, 'ReLU']
+        [10, 'Conv2d'] [11, 'BatchNorm2d'] [12, 'ReLU'] [13, 'MaxPool2d']
+        [14, 'Photoreceptor_Block'] [15, 'Photoreceptor_Block'] 
+        
+        [16, 'MaxPool2d'] [17, 'Photoreceptor_Block'] [18, 'Photoreceptor_Block']
+        
+        [19, 'MaxPool2d'] [20, 'Photoreceptor_Block'] [21, 'Photoreceptor_Block']
+        
+        [22, 'MaxPool2d'] [23, 'Conv2d'] [24, 'ReLU'] [25, 'Conv2d'] [26, 'ReLU']
+        """
+        # index of each stage's layer
+        self.stage_id = [[7, 8, 9, 10, 11, 12, 13, 14, 15],
+                         [16, 17, 18],
+                         [19, 20, 21],
+                         [22, 23, 24, 25, 26]] 
         self.cfg = cfg
         
 
         self.layers = []
-        for i, v in enumerate(self.config):
+        for i, v in enumerate(self.layer_num_cfg):
             if v == 'M':
                 self.layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
             elif v == 'C':
                 self.layers += [nn.MaxPool2d(kernel_size=2, stride=2, ceil_mode=True)]
             else:
-                # replace vanilla conv2d with PhotoReceptor block
-                # 기존에는 stem cell 이후에 reflectance 분기했지만, 우리는 조금 더 가서 1st stage에서 분기
+                # reflectance 분기이후 한 스테이지는 VGG 그대로 진행
+                # 나머지부터는 Photoreceptor block 적용
                 if i < 6:
                     conv2d = nn.Conv2d(in_channels, v, kernel_size=3, padding=1)
 
@@ -94,11 +117,10 @@ class BRNet(nn.Module):
         sources = []
 
         
-        for i in range(5):
+        for i in range(7):
             x = self.layers[i](x)
         sources += [x]
 
-        B, C, H, W = x.size()
 
         darklevel = self.dark(x) # (B, 1, H, W)
         darklevel_mean = darklevel.mean(dim = [2, 3], keepdim = True) # (B, 1, 1, 1)
@@ -146,7 +168,7 @@ if __name__ == '__main__':
 
     with torch.no_grad():
         # Unpack all returned values from the forward method
-        sources, darklevel_mean, ref, ref_mean = detector(img, only_disentangle = True)
+        sources, darklevel_mean, ref, ref_mean = detector(img, only_disentangle = False)
 
     for i, x in enumerate(sources):
         print(f'output of {i}th stage:', x.shape)

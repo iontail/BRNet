@@ -27,8 +27,6 @@ class GainBlock(nn.Module):
 
     def forward(self, x):
         gain = self.layers(x)
-        print(gain.shape)
-        print(x.shape)
         return x * gain  + x
     
 class ReflectiveFeedback(nn.Module):
