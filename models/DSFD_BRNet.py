@@ -463,6 +463,13 @@ if __name__ == '__main__':
 
     from data.config import cfg
 
+    def count_parameters(model):
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        non_trainable_params = total_params - trainable_params
+        return total_params, trainable_params, non_trainable_params
+
+
     # 모델 빌드 파라미터 정의
     input_height = cfg.INPUT_SIZE
     input_width = cfg.INPUT_SIZE
@@ -494,6 +501,11 @@ if __name__ == '__main__':
         test_model = build_net_DSFD(phase=test_phase, num_classes=num_classes)
         test_model.eval()
         print("모델 빌드 성공.")
+
+        total_params, trainable_params, non_trainable_params = count_parameters(test_model)
+        print(f"  - 총 파라미터 수: {total_params:,}")
+        print(f"  - 학습 가능한 파라미터 수: {trainable_params:,}")
+        print(f"  - 학습 불가능한 파라미터 수: {non_trainable_params:,}")
     except Exception as e:
         print(f"모델 빌드 중 오류 발생: {e}")
         import traceback

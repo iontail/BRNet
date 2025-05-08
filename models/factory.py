@@ -4,18 +4,18 @@ from __future__ import print_function
 from __future__ import absolute_import
 
 
-from .DSFD import build_net_DSFD
+from .DSFD_BRNet import build_net_DSFD
 
 
-def build_net(phase, num_classes=2, model='vgg'):
+def build_net(phase, num_classes=2):
     if phase != "test" and phase != "train":
         print("ERROR: Phase: " + phase + " not recognized")
         return
 
-    return build_net_DSFD(phase, num_classes, model)
+    return build_net_DSFD(phase, num_classes)
 
 
-def basenet_factory(model=''):
-	basenet = 'Bio_ReflectNet_base.pth'
+def basenet_factory():
+	basenet = 'BRNet_base.pth'
 	return basenet
 

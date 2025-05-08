@@ -49,7 +49,7 @@ _C.ABLATION.USE_GAIN = True
 _C.ABLATION.USE_TAPETUM = True
 
 # model config
-_C.MODEL_NAME = 'BRNet'
+_C.MODEL_NAME = 'BRNet_base'
 _C.PRETRAINED = False
 _C.ACTIVATION = 'relu'
 _C.NORMALIZE = 'bn' # 'bn' or 'gn' or None if do not want to use normalization
