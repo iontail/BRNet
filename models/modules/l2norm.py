@@ -13,10 +13,7 @@ class L2Norm(nn.Module):
         self.gamma = scale or None
         self.eps = 1e-10
         self.weight = nn.Parameter(torch.Tensor(self.n_channels))
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        init.constant(self.weight,self.gamma)
+        init.constant_(self.weight, self.gamma)
 
     def forward(self, x):
         norm = x.pow(2).sum(dim=1, keepdim=True).sqrt()+self.eps

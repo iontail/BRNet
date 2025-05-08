@@ -1,5 +1,6 @@
 import os
 import torch
+import torch.nn.functional as F
 import torch.nn as nn
 
 from data.config import cfg
@@ -85,10 +86,10 @@ class DSFD(nn.Module):
 
     def _upsample_prod(self, x, y): # y크기로 upsample한 다음에 y과 element-product
         _, _, H, W = y.size()
-        return F.upsample(x, size=(H, W), mode='bilinear') * y
+        return F.interpolate(x, size=(H, W), mode='bilinear', align_corners=False) * y
 
     # method for inference
-    def test_forward(self, x, x_light, I, I_light):
+    def test_forward(self, x):
         size = x.size()[2:]
         pal1_sources = list()
         pal2_sources = list()
@@ -97,46 +98,31 @@ class DSFD(nn.Module):
         loc_pal2 = list()
         conf_pal2 = list()
 
-        for k in range(16):
-            x = self.brnet[k](x)
-            if k == 4:
-                x_ = x
-        #
-        R = self.ref(x_[0:1])
+        # Use BRNet for feature extraction instead of direct VGG backbone
+        features, darklevel, R, _ = self.brnet(x, only_disentangle=False)
+        
+        # Extract features from BRNet outputs
+        # Starting from the first feature after initial processing (same as in forward method)
+        for i, feature in enumerate(features[1:]):  # starting from output of 16th layer of BRNet
+            if i < 3:
+                s = getattr(self, f'L2Normef{i+1}')(feature)
+                pal1_sources.append(s)
+            elif i == 3:
+                x = feature  # Save for passing to next layers
+                pal1_sources.append(feature)
 
-        of1 = x
-        s = self.L2Normof1(of1)
-        pal1_sources.append(s)
-        # apply vgg up to fc7
-        for k in range(16, 23):
-            x = self.vgg[k](x)
-        of2 = x
-        s = self.L2Normof2(of2)
-        pal1_sources.append(s)
-
-        for k in range(23, 30):
-            x = self.vgg[k](x)
-        of3 = x
-        s = self.L2Normof3(of3)
-        pal1_sources.append(s)
-
-        for k in range(30, len(self.vgg)):
-            x = self.vgg[k](x)
-        of4 = x
-        pal1_sources.append(of4)
-        # apply extra layers and cache source layer outputs
-
+        # Apply extra layers as in original test_forward
         for k in range(2):
             x = F.relu(self.extras[k](x), inplace=True)
         of5 = x
         pal1_sources.append(of5)
+        
         for k in range(2, 4):
             x = F.relu(self.extras[k](x), inplace=True)
         of6 = x
         pal1_sources.append(of6)
-        # ---------- 각 레이어 피쳐맵 저장 -----------
-        
 
+        # Feature Pyramid Network (FPN) processing
         conv7 = F.relu(self.fpn_topdown[0](of6), inplace=True)
 
         x = F.relu(self.fpn_topdown[1](conv7), inplace=True)
@@ -145,20 +131,21 @@ class DSFD(nn.Module):
 
         x = F.relu(self.fpn_topdown[2](conv6), inplace=True)
         convfc7_2 = F.relu(self._upsample_prod(
-            x, self.fpn_latlayer[1](of4)), inplace=True)
+            x, self.fpn_latlayer[1](pal1_sources[3])), inplace=True)
 
         x = F.relu(self.fpn_topdown[3](convfc7_2), inplace=True)
         conv5 = F.relu(self._upsample_prod(
-            x, self.fpn_latlayer[2](of3)), inplace=True)
+            x, self.fpn_latlayer[2](pal1_sources[2])), inplace=True)
 
         x = F.relu(self.fpn_topdown[4](conv5), inplace=True)
         conv4 = F.relu(self._upsample_prod(
-            x, self.fpn_latlayer[3](of2)), inplace=True)
+            x, self.fpn_latlayer[3](pal1_sources[1])), inplace=True)
 
         x = F.relu(self.fpn_topdown[5](conv4), inplace=True)
         conv3 = F.relu(self._upsample_prod(
-            x, self.fpn_latlayer[4](of1)), inplace=True)
+            x, self.fpn_latlayer[4](pal1_sources[0])), inplace=True)
 
+        # Feature Enhancement Module (FEM)
         ef1 = self.fpn_fem[0](conv3)
         ef1 = self.L2Normef1(ef1)
         ef2 = self.fpn_fem[1](conv4)
@@ -168,9 +155,10 @@ class DSFD(nn.Module):
         ef4 = self.fpn_fem[3](convfc7_2)
         ef5 = self.fpn_fem[4](conv6)
         ef6 = self.fpn_fem[5](conv7)
-        # ----------- Top-Down Feature Fusion -----------
 
         pal2_sources = (ef1, ef2, ef3, ef4, ef5, ef6)
+        
+        # Apply localization and confidence layers
         for (x, l, c) in zip(pal1_sources, self.loc_pal1, self.conf_pal1):
             loc_pal1.append(l(x).permute(0, 2, 3, 1).contiguous())
             conf_pal1.append(c(x).permute(0, 2, 3, 1).contiguous())
@@ -179,29 +167,32 @@ class DSFD(nn.Module):
             loc_pal2.append(l(x).permute(0, 2, 3, 1).contiguous())
             conf_pal2.append(c(x).permute(0, 2, 3, 1).contiguous())
 
+        # Collect feature map information for prior box generation
         features_maps = []
         for i in range(len(loc_pal1)):
             feat = []
             feat += [loc_pal1[i].size(1), loc_pal1[i].size(2)]
             features_maps += [feat]
         
-        # flatten시킨 각 레이어 feature맵을 하나로 합침
+        # Flatten and concatenate outputs
         loc_pal1 = torch.cat([o.view(o.size(0), -1)
-                              for o in loc_pal1], 1)
+                            for o in loc_pal1], 1)
         conf_pal1 = torch.cat([o.view(o.size(0), -1)
-                               for o in conf_pal1], 1)
+                            for o in conf_pal1], 1)
 
         loc_pal2 = torch.cat([o.view(o.size(0), -1)
-                              for o in loc_pal2], 1)
+                            for o in loc_pal2], 1)
         conf_pal2 = torch.cat([o.view(o.size(0), -1)
-                               for o in conf_pal2], 1)
+                            for o in conf_pal2], 1)
 
-        priorbox = PriorBox(size, features_maps, cfg, pal=1)
+        # Generate prior boxes
+        priorbox = PriorBox(size, features_maps, self.cfg, pal=1)
         self.priors_pal1 = priorbox.forward().detach()
 
-        priorbox = PriorBox(size, features_maps, cfg, pal=2)
+        priorbox = PriorBox(size, features_maps, self.cfg, pal=2)
         self.priors_pal2 = priorbox.forward().detach()
 
+        # Generate detection output
         if self.phase == 'test':
             output = self.detect.forward(
                 loc_pal2.view(loc_pal2.size(0), -1, 4),
@@ -209,7 +200,6 @@ class DSFD(nn.Module):
                                             self.num_classes)),  # conf preds
                 self.priors_pal2.type(type(x.data))
             )
-
         else:
             output = (
                 loc_pal1.view(loc_pal1.size(0), -1, 4),
@@ -218,6 +208,7 @@ class DSFD(nn.Module):
                 loc_pal2.view(loc_pal2.size(0), -1, 4),
                 conf_pal2.view(conf_pal2.size(0), -1, self.num_classes),
                 self.priors_pal2)
+                
         return output, R
 
 
@@ -236,7 +227,7 @@ class DSFD(nn.Module):
         x_light = features_light[0]
 
         # 어두운 이미지 통과
-        features_dark, darklevel_dark, R_dark = self.brnet(x, only_disentangle = True)
+        features_dark, darklevel_dark, R_dark, _ = self.brnet(x, only_disentangle = True)
         x_dark = features_dark[0] 
     
 
@@ -290,10 +281,12 @@ class DSFD(nn.Module):
         # Semi Orthogonal Regularity Loss (미완성)
         # --------------------------------
         # SOTR loss from "https://github.com/cuiziteng/ICCV_MAET.git" of https://arxiv.org/abs/2205.03346
+        loss_sotr = 0
+        """
         loss_sotr = self.config.WEIGHT.SOTR * torch.mean(torch.abs(self.ort_func (grads['light_grad'].view(batch_size,-1), grads['dark_grad'].view(batch_size,-1))))+\
                             0.5*torch.mean(1 - torch.abs(self.ort_func(grads['light_grad'].view(batch_size,-1), grads['light_grad'].view(batch_size,-1)))) +\
                             0.5*torch.mean(1 - torch.abs(self.ort_func(grads['dark_grad'].view(batch_size,-1), grads['dark_grad'].view(batch_size,-1))))
-
+        """
 
         x = F.relu(self.fpn_topdown[1](conv7), inplace=True)
         conv6 = F.relu(self._upsample_prod(
@@ -410,7 +403,6 @@ class DSFD(nn.Module):
 
         # Zero Convolution!
         # Specific zero initialization for Conv2d layers within GainBlock and ReflectiveFeedback
-        # This will be called when m is an instance of GainBlock or ReflectiveFeedback.
         # It overrides any previous initialization for Conv2d layers inside these blocks.
         if isinstance(m, (GainBlock, ReflectiveFeedback)):
             for layer_in_block in m.layers: # m.layers is the nn.Sequential
@@ -426,30 +418,179 @@ extras_cfg = [256, 'S', 512, 128, 'S', 256]
 fem_cfg = [256, 512, 512, 1024, 512, 256]
 
 
-def multibox(vgg, extra_layers, num_classes):
+def multibox(extra_layers, num_classes):
+    """
+    Creates the localization and confidence prediction layers for DSFD with BRNet backbone.
+    
+    Args:
+        extra_layers: Additional layers added after the backbone
+        num_classes: Number of classes for classification
+        
+    Returns:
+        Tuple of (loc_layers, conf_layers)
+    """
     loc_layers = []
     conf_layers = []
-    vgg_source = [11, 14, 17, -2]
-
-    for k, v in enumerate(vgg_source):
-        loc_layers += [nn.Conv2d(vgg[v].out_channels,
-                                 4, kernel_size=3, padding=1)]
-        conf_layers += [nn.Conv2d(vgg[v].out_channels,
-                                  num_classes, kernel_size=3, padding=1)]
+    
+    # Determine correct channel counts based on BRNet implementation
+    # Looking at BRNet.py we can see the actual channel counts in the returned features
+    brnet_feature_channels = [256, 512, 512, 1024]
+    
+    # Create location and confidence layers for BRNet features
+    for channels in brnet_feature_channels:
+        loc_layers += [nn.Conv2d(channels, 4, kernel_size=3, padding=1)]
+        conf_layers += [nn.Conv2d(channels, num_classes, kernel_size=3, padding=1)]
+    
+    # Add layers for extra features
     for k, v in enumerate(extra_layers[1::2], 2):
-        loc_layers += [nn.Conv2d(v.out_channels,
-                                 4, kernel_size=3, padding=1)]
-        conf_layers += [nn.Conv2d(v.out_channels,
-                                  num_classes, kernel_size=3, padding=1)]
+        loc_layers += [nn.Conv2d(v.out_channels, 4, kernel_size=3, padding=1)]
+        conf_layers += [nn.Conv2d(v.out_channels, num_classes, kernel_size=3, padding=1)]
+    
     return (loc_layers, conf_layers)
-
 
 def build_net_DSFD(phase, num_classes=2):
     base = BRNet(3, cfg)
     extras = add_extras(extras_cfg, 1024)
-    head1 = multibox(base, extras, num_classes)
-    head2 = multibox(base, extras, num_classes)
+    head1 = multibox(extras, num_classes)
+    head2 = multibox(extras, num_classes)
     fem = fem_module(fem_cfg)
     return DSFD(phase, base, extras, fem, head1, head2, num_classes, cfg = cfg)
 
+if __name__ == '__main__':
+    import torch
 
+    print("DSFD_BRNet.py 실행 테스트 시작...")
+
+    from data.config import cfg
+
+    # 모델 빌드 파라미터 정의
+    input_height = cfg.INPUT_SIZE
+    input_width = cfg.INPUT_SIZE
+    print(f"config.py에서 로드된 입력 크기 사용: {input_height}x{input_width}")
+    
+    # Batch size 및 채널 수 정의
+    batch_size = 2
+    channels = 3
+    
+    # 더미 입력 텐서 생성
+    dummy_input = torch.randn(batch_size, channels, input_height, input_width)
+    dummy_input_light = torch.randn(batch_size, channels, input_height, input_width)
+    dummy_I = torch.randn(batch_size, 1, input_height, input_width)  # Illumination map
+    dummy_I_light = torch.randn(batch_size, 1, input_height, input_width)  # Light illumination map
+    
+    print(f"더미 입력 텐서 생성 완료.")
+    print(f"- 어두운 이미지 형태: {dummy_input.shape}")
+    print(f"- 밝은 이미지 형태: {dummy_input_light.shape}")
+    print(f"- 어두운 이미지 조명 맵 형태: {dummy_I.shape}")
+    print(f"- 밝은 이미지 조명 맵 형태: {dummy_I_light.shape}")
+
+    # 1. TEST 모드에서 모델 테스트
+    print("\n===== TEST 모드 테스트 =====")
+    test_phase = 'test'
+    num_classes = cfg.NUM_CLASSES
+    
+    print(f"DSFD 모델 빌드 중... (phase='{test_phase}', num_classes={num_classes})")
+    try:
+        test_model = build_net_DSFD(phase=test_phase, num_classes=num_classes)
+        test_model.eval()
+        print("모델 빌드 성공.")
+    except Exception as e:
+        print(f"모델 빌드 중 오류 발생: {e}")
+        import traceback
+        traceback.print_exc()
+        exit()
+
+    # test_forward 실행
+    print("test_forward 메서드 실행 중...")
+    try:
+        with torch.no_grad():
+            outputs, R_dark = test_model.test_forward(dummy_input)
+            print("test_forward 실행 성공.")
+
+            # 출력 정보 인쇄
+            print("\n--- 출력 정보 ---")
+            print(f"test_forward의 'outputs' 타입: {type(outputs)}")
+            if isinstance(outputs, torch.Tensor):
+                print(f"  Detections 텐서 형태: {outputs.shape}")
+            elif isinstance(outputs, tuple):
+                print(f"  Output이 튜플입니다, 길이: {len(outputs)}")
+                for i, item in enumerate(outputs):
+                    if isinstance(item, torch.Tensor):
+                        print(f"    outputs[{i}] 형태: {item.shape}")
+                    else:
+                        print(f"    outputs[{i}]: {type(item)}")
+            else:
+                print(f"  Detections: {type(outputs)}")
+
+            print(f"test_forward의 'R_dark' 타입: {type(R_dark)}")
+            if isinstance(R_dark, torch.Tensor):
+                print(f"  R_dark 텐서 형태: {R_dark.shape}")
+            else:
+                print(f"  R_dark: {type(R_dark)}")
+    except Exception as e:
+        print(f"test_forward 실행 중 오류 발생: {e}")
+        import traceback
+        traceback.print_exc()
+
+    # 2. TRAIN 모드에서 모델 테스트
+    print("\n===== TRAIN 모드 테스트 =====")
+    train_phase = 'train'
+    
+    print(f"DSFD 모델 빌드 중... (phase='{train_phase}', num_classes={num_classes})")
+    try:
+        train_model = build_net_DSFD(phase=train_phase, num_classes=num_classes)
+        train_model.train()
+        print("모델 빌드 성공.")
+    except Exception as e:
+        print(f"모델 빌드 중 오류 발생: {e}")
+        import traceback
+        traceback.print_exc()
+        exit()
+
+    # forward 메서드 실행
+    print("forward 메서드 실행 중...")
+    try:
+        # train 모드에서는 forward 메서드에 4개의 입력이 필요함
+        outputs, reflectances, darklevels, loss_mutual, loss_sotr = train_model(
+            dummy_input, dummy_input_light, dummy_I, dummy_I_light
+        )
+        print("forward 실행 성공.")
+
+        # 출력 정보 인쇄
+        print("\n--- 출력 정보 ---")
+        print(f"forward의 'outputs' 타입: {type(outputs)}")
+        if isinstance(outputs, tuple):
+            print(f"  Output은 튜플입니다, 길이: {len(outputs)}")
+            for i, item in enumerate(outputs):
+                if isinstance(item, torch.Tensor):
+                    print(f"    outputs[{i}] 형태: {item.shape}")
+                else:
+                    print(f"    outputs[{i}]: {type(item)}")
+                    
+        print(f"forward의 'reflectances' 타입: {type(reflectances)}")
+        if isinstance(reflectances, list):
+            print(f"  리플렉턴스 리스트 길이: {len(reflectances)}")
+            for i, item in enumerate(reflectances):
+                if isinstance(item, torch.Tensor):
+                    print(f"    reflectances[{i}] 형태: {item.shape}")
+                else:
+                    print(f"    reflectances[{i}]: {type(item)}")
+                    
+        print(f"forward의 'darklevels' 타입: {type(darklevels)}")
+        if isinstance(darklevels, list):
+            print(f"  다크레벨 리스트 길이: {len(darklevels)}")
+            for i, item in enumerate(darklevels):
+                if isinstance(item, torch.Tensor):
+                    print(f"    darklevels[{i}] 형태: {item.shape}")
+                else:
+                    print(f"    darklevels[{i}]: {type(item)}")
+                    
+        print(f"loss_mutual 값: {loss_mutual}")
+        print(f"loss_sotr 값: {loss_sotr}")
+        
+    except Exception as e:
+        print(f"forward 실행 중 오류 발생: {e}")
+        import traceback
+        traceback.print_exc()
+
+    print("\nDSFD_BRNet.py 실행 테스트 종료.")
