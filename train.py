@@ -19,10 +19,10 @@ from torchmetrics.functional import structural_similarity_index_measure as ssim
 from tqdm import tqdm
 import wandb
 
-from data.config import cfg
-from layers.modules.multibox_loss import MultiBoxLoss
-from layers.modules.enhance_loss import EnhanceLoss, ImprovedDarklevelLoss
-from data.widerface import WIDERDetection, detection_collate, Compute_Darklevel
+from models.data.config import cfg
+from models.losses.multibox_loss import MultiBoxLoss
+from models.losses.enhance_loss import EnhanceLoss
+from models.data.widerface import WIDERDetection, detection_collate
 from models.factory import build_net, basenet_factory
 from models.modules.enhancer import RetinexNet
 from utils.DarkISP import Low_Illumination_Degrading
