@@ -127,32 +127,6 @@ def detection_collate(batch):
         paths.append(sample[2])
     return torch.stack(imgs, 0), targets, paths
 
-
-def Compute_Darklevel(img, a = 0.06, b = 110, scale = 0.9):
-
-    # img가 torch tensor이면 numpy로 변경
-    if isinstance(img, torch.Tensor):
-        img = img.cpu().numpy()
-
-    # 이미지 범위를 0~255로 설정
-    if img.max() <= 1.0:
-        img = img * 255
-
-    # YUV 변환 후 Y 채널 추출
-    if len(img.shape) == 3 and img.shape[2] == 3:
-        img_yuv = cv2.cvtColor(img.astype(np.uint8), cv2.COLOR_RGB2YUV)
-        luminance = img_yuv[:, :, 0]
-    else:
-        luminance = img  # 이미 grayscale이면 그대로 사용 가능
-
-    # 평균 휘도값
-    luminance = np.mean(luminance)
-
-    # Sigmoid를 이용해 darklevel 계산
-    darklevel = (1.0 / (1.0 + np.exp(-a * (luminance - b)))) * scale
-
-    return torch.tensor(darklevel, dtype=torch.float32)
-
 if __name__ == '__main__':
     from config import cfg
     dataset = WIDERDetection(cfg.FACE.TRAIN_FILE)

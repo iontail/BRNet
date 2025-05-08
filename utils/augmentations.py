@@ -13,8 +13,9 @@ import types
 from PIL import Image, ImageEnhance, ImageDraw
 import math
 import six
-from data.config import cfg
 import random
+
+from ..data.config import cfg
 
 
 class sampler():
@@ -1032,6 +1033,26 @@ def anchor_crop_image_sampling2(img,
 
         return image, dark_image, sampled_labels
 
+# newly defined function
+def Compute_Darklevel(img, a=0.06, b=110, scale=0.9):
+    
+    if isinstance(img, torch.Tensor):
+        img_np = img.cpu().numpy()
+    else:
+        img_np = img
+
+    # RGB to Grayscale 변환 직접 수행 (효율적)
+    # 현재 img는 스케일링, mean subtraction 없이 0~255
+    img_gray = 0.299 * img_np[0] + 0.587 * img_np[1] + 0.114 * img_np[2]
+
+    # 평균 휘도값 계산
+    luminance = np.mean(img_gray)
+
+    # sigmoid를 이용한 darklevel 계산
+    darklevel = (1.0 / (1.0 + np.exp(-a * (luminance - b)))) * scale
+
+    return torch.tensor(darklevel, dtype=torch.float32)
+
 def preprocess(img, bbox_labels, mode, image_path):
     img_width, img_height = img.size
     sampled_labels = bbox_labels
@@ -1115,7 +1136,12 @@ def preprocess(img, bbox_labels, mode, image_path):
     img = img[[2, 1, 0], :, :]  # to RGB
     #img = img * cfg.scale
 
-    return img, sampled_labels
+    # DARK-ISP 입력조건때문에 standardization은 제외했다고 함
+
+
+    darklevel = Compute_Darklevel(img, a = cfg.DARKLEVEL.A, b = cfg.DARKLEVEL.B, scale = cfg.DARKLEVEL.SCALE)
+
+    return img, sampled_labels, darklevel
 
 
 

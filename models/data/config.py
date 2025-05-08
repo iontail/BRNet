@@ -35,6 +35,12 @@ _C.scale = 1 / 127.0
 _C.anchor_sampling = True
 _C.filter_min_face = True
 
+# darklevel processing config
+_C.DARKLEVEL = EasyDict()
+_C.DARKLEVEL.A = 0.06
+_C.DARKLEVEL.B = 110
+_C.DARKLEVEL.SCALE = 0.9
+
 # train config
 _C.LR_STEPS = (10000*2,12500*2,15000*2)
 _C.MAX_STEPS = 150000
