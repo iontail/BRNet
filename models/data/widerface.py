@@ -10,13 +10,13 @@ import torch.utils.data as data
 import numpy as np
 import random
 import cv2
-from utils.augmentations import preprocess
+from models.data.augmentations import preprocess
 
 
 
 
 class WIDERDetection(data.Dataset):
-    """docstring for WIDERDetection"""
+    """WIDER-Face + dark-level label"""
 
     def __init__(self, list_file, mode='train'):
         super(WIDERDetection, self).__init__()
@@ -54,8 +54,8 @@ class WIDERDetection(data.Dataset):
         return self.num_samples
 
     def __getitem__(self, index):
-        img, target, img_path, h, w = self.pull_item(index)
-        return img, target, img_path
+        img, target, darklevel, img_path = self.pull_item(index)
+        return img, target, darklevel, img_path
 
     def pull_item(self, index):
         while True:
@@ -69,7 +69,7 @@ class WIDERDetection(data.Dataset):
                 np.array(self.boxes[index]), im_width, im_height)
             label = np.array(self.labels[index])
             bbox_labels = np.hstack((label[:, np.newaxis], boxes)).tolist()
-            img, sample_labels = preprocess(
+            img, sample_labels, darklevel = preprocess(
                 img, bbox_labels, self.mode, image_path)
             sample_labels = np.array(sample_labels)
             if len(sample_labels) > 0:
@@ -93,7 +93,7 @@ class WIDERDetection(data.Dataset):
             draw.rectangle(bbox,outline='red')
         img.save('image.jpg')
         '''
-        return torch.from_numpy(img), target, image_path, im_height, im_width
+        return torch.from_numpy(img), target, darklevel, image_path
         
 
     def annotransform(self, boxes, im_width, im_height):
@@ -102,11 +102,10 @@ class WIDERDetection(data.Dataset):
         boxes[:, 2] /= im_width
         boxes[:, 3] /= im_height
         return boxes
-    
-
 
 def detection_collate(batch):
-    """Custom collate fn for dealing with batches of images that have a different
+    """
+    Custom collate fn for dealing with batches of images that have a different
     number of associated object annotations (bounding boxes).
 
     Arguments:
@@ -117,15 +116,23 @@ def detection_collate(batch):
             1) (tensor) batch of images stacked on their 0 dim
             2) (list of tensors) annotations for a given image are stacked on
                                  0 dim
+            3) (tensor) batch of darklevels stacked on 0 dim
+            4) (list of strings) image paths
     """
-    targets = []
-    imgs = []
+    imgs = [] 
+    tgs = [] 
+    dls = []
     paths = []
-    for sample in batch:
-        imgs.append(sample[0])
-        targets.append(torch.FloatTensor(sample[1]))
-        paths.append(sample[2])
-    return torch.stack(imgs, 0), targets, paths
+
+    for img, tgt, dl, p in batch:
+        imgs.append(img)
+        tgs.append(torch.as_tensor(tgt))
+        dls.append(dl)              # 스칼라 tensor
+        paths.append(p)
+    return (torch.stack(imgs, 0),      # B×C×H×W
+            tgs,                       # list-of-tensor (가변 길이)
+            torch.stack(dls, 0),       # B×1
+            paths)
 
 if __name__ == '__main__':
     from config import cfg
