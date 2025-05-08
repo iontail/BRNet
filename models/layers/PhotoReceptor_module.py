@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from bioreflectnet.models.layers import DCNv3
+from layers.DCNv3 import DCNv3
 
-str_to_act = {'relu': nn.ReLu(), 'gelu': nn.GELU()} # add the activation what you want to use
+str_to_act = {'relu': nn.ReLU(), 'gelu': nn.GELU()} # add the activation what you want to use
 str_to_norm = {'bn': nn.BatchNorm2d, 'ln': nn.LayerNorm}
 
 class GainBlock(nn.Module):
@@ -27,6 +27,8 @@ class GainBlock(nn.Module):
 
     def forward(self, x):
         gain = self.layers(x)
+        print(gain.shape)
+        print(x.shape)
         return x * gain  + x
     
 class ReflectiveFeedback(nn.Module):
@@ -37,6 +39,7 @@ class ReflectiveFeedback(nn.Module):
     act as **Tapetum Lucidum**
     """
     def __init__(self, h_dim, activation = 'relu'):
+        super(ReflectiveFeedback, self).__init__()
         self.h_dim = h_dim
         self.activation = str_to_act[activation]
         self.layers = nn.Sequential(
@@ -46,7 +49,7 @@ class ReflectiveFeedback(nn.Module):
 
     def forward(self, x, reflectance = None):
         if reflectance is not None:
-            reflect_info = self.layers(x)
+            reflect_info = self.layers(reflectance)
             return x + reflect_info
         else:
             return x
@@ -78,25 +81,22 @@ class Rod_Block(nn.Module):
         self.activation = activation
         self.normalize = normalize
         self.downsample = downsample
+        self.cfg = cfg
 
         self.bn1 = str_to_norm[normalize](out_dim)
         self.bn2 = str_to_norm[normalize](out_dim)
 
 
         # GAIN이랑 TAPETUM을 모두 사용하지 않는 경우에는 mid_dim을 out_dim으로 설정해서 차원 맞춰줌
-        if cfg.ABLATION.USE_GAIN or cfg.ABLATION.USE_TAPETUM:
-            mid_dim = in_dim // reduction
-        else:
-            mid_dim = out_dim
+        
 
-
-        self.gain = GainBlock(in_dim, out_dim, activation = self.activation)
-        self.tapetum = ReflectiveFeedback(mid_dim, activation = self.activation) # problems: mid_dim??
-        self.dcn = DCNv3(mid_dim, out_dim, kernel_size = 3, padding = 1, stride = 1)
+        self.gain = GainBlock(in_dim, in_dim, activation = self.activation)
+        self.tapetum = ReflectiveFeedback(in_dim, activation = self.activation) # problems: mid_dim??
+        self.dcn = DCNv3(in_dim, out_dim, kernel_size = 3, padding = 1, stride = 1)
         self.conv = nn.Conv2d(out_dim, out_dim, kernel_size = 3, padding = 1) #problems: kernel_size = 3?
 
         
-        self.layer = nn.Sequential(
+        self.layers = nn.Sequential(
             self.dcn,
             self.bn1,
             str_to_act[self.activation],
@@ -110,9 +110,11 @@ class Rod_Block(nn.Module):
         
 
     def forward(self, x, reflectance = None):
-        
-        x = self.gain(x)
-        x = self.tapetum(x, reflectance)
+
+        if self.cfg.ABLATION.USE_GAIN:
+            x = self.gain(x)
+        if self.cfg.ABLATION.USE_TAPETUM:
+            x = self.tapetum(x, reflectance)
         
         out = self.layers(x)
 
@@ -144,8 +146,8 @@ class Cone_Block(nn.Module):
         self.activation = activation
         self.down = down
 
-        self.b1= str_to_norm[normalize](out_dim)
-        self.b1= str_to_norm[normalize](out_dim)
+        self.bn1= str_to_norm[normalize](out_dim)
+        self.bn2= str_to_norm[normalize](out_dim)
         self.activation = str_to_act[activation]
 
         self.layers = nn.Sequential(
@@ -183,6 +185,7 @@ class Photoreceptor_Block(nn.Module):
         down         : downsample ratio for the input feature map
         downsample   : downsample or not
         down         : downsample ratio for the input feature map
+        cfg          : configuration
 
     returns:
         out          : [B, C, H, W] feature map
@@ -195,7 +198,8 @@ class Photoreceptor_Block(nn.Module):
             activation = 'relu',
             downsample = False,
             reduction = 2,
-            down = 1
+            down = 1,
+            cfg = None
             ):
         super(Photoreceptor_Block, self).__init__()
 
@@ -208,7 +212,7 @@ class Photoreceptor_Block(nn.Module):
         self.down = down
 
         self.rod = Rod_Block(in_dim, out_dim, reduction, activation,
-                             normalize, downsample, down)
+                             normalize, downsample, down, cfg = cfg)
         self.cone = Cone_Block(in_dim, out_dim, normalize, activation,
                                downsample, down)
 
@@ -223,12 +227,12 @@ class Photoreceptor_Block(nn.Module):
         if reflectance is not None:
             assert reflectance.dim() == 4, "Reflectance has wrong shape. check whether the shape is [B, 1, 1, 1]"
 
-            rod_out = self.rod_path(x, reflectance)
-            cone_out = self.cone_path(x)
+            rod_out = self.rod(x, reflectance)
+            cone_out = self.cone(x)
 
         else:
-            rod_out = self.rod_path(x)
-            cone_out = self.cone_path(x)
+            rod_out = self.rod(x)
+            cone_out = self.cone(x)
     
 
 

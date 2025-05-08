@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 
-from bioreflectnet.models.layers.basic_layers import *
-from bioreflectnet.models.layers.PhotoReceptor_module import Photoreceptor_Block
-from bioreflectnet.models.layers.DSFD_basic_modules import Interpolate
-from bioreflectnet.data.config import cfg
+from layers.basic_layers import *
+from layers.PhotoReceptor_module import Photoreceptor_Block
+from layers.DSFD_basic_modules import Interpolate
+from data.config import cfg
 
 class BRNet(nn.Module):
     """
@@ -24,7 +24,7 @@ class BRNet(nn.Module):
         # Bio-Receptor module은 개당 가지고 있는 conv수가 많아서 config 변경
         self.config = [64, 64, 'M', 128, 128, 'M', 256, 256, 'C', 512, 512, 'M', 512, 512, 'M']
 
-        self.stage_id = [[6, 7, 8], [9, 10, 11], [12, 13, 14], [15, 16], [17, 18]] # index of each stage's layer
+        self.stage_id = [[5, 6, 7, 8], [9, 10, 11], [12, 13, 14], [15, 16], [17, 18]] # index of each stage's layer
         self.cfg = cfg
         
 
@@ -48,7 +48,9 @@ class BRNet(nn.Module):
                 else: # reflectance 이후에는 PhotoReceptor block 적용
                     self.layers += [Photoreceptor_Block(in_channels, v, normalize = cfg.NORMALIZE,
                                                         activation =  cfg.ACTIVATION,
-                                                        reduction = cfg.REDUCTION)]
+                                                        reduction = cfg.REDUCTION,
+                                                        cfg = cfg)]
+                in_channels = v
 
         conv6 = nn.Conv2d(512, 1024, kernel_size=3, padding=3, dilation=3)
         conv7 = nn.Conv2d(1024, 1024, kernel_size=1)
@@ -57,26 +59,18 @@ class BRNet(nn.Module):
         
         # for calculating reflectance   
         self.ref = nn.Sequential(
-                nn.Linear(128, 128),
+                nn.Conv2d(64, 64, kernel_size=3, padding=1),
                 nn.ReLU(inplace=True),
                 Interpolate(2),
-                nn.Linear(128, 1),
-                nn.Sigmoid()
-            )
-        
-        self.illuminaion = nn.Sequential(
-                nn.Linear(128, 128),
-                nn.ReLU(inplace=True),
-                Interpolate(2),
-                nn.Linear(128, 1),
+                nn.Conv2d(64, 3, kernel_size=3, padding=1),
                 nn.Sigmoid()
             )
         
         self.dark = nn.Sequential(
-                nn.Linear(128, 128),
+                nn.Conv2d(64, 64, kernel_size=3, padding=1),
                 nn.ReLU(inplace=True),
                 Interpolate(2),
-                nn.Linear(128, 1),
+                nn.Conv2d(64, 1, kernel_size=3, padding=1),
                 nn.Sigmoid()
             )
         
@@ -85,17 +79,17 @@ class BRNet(nn.Module):
     
 
 
-    def forward(self, x, only_ref = False):
+    def forward(self, x, only_disentangle = False):
         """
         Args:
             x : input image (B, C, H, W)
-            only_ref : whether to return reflectance only or not (default: False)
+            only_disentangle : whether to return reflectance and dark level only or not (default: False)
             
         Returns:
-            sources : list of feature maps from each stage
-            ref     : reflectance map (B, 1, 1, 1)
-            illi    : illumination map (B, 1, 1, 1)
-            darklevel: darkness level (B, 1, 1, 1)    
+            sources         : list of feature maps from each stage
+            darklevel_mean  : mean dark level (B, 1, 1, 1)
+            ref             : reflectance map whose H and H equal to origial image (B, H, W, C) 
+            ref_mean        : mean reflectance (B, 1, 1, 1)
         """
         sources = []
 
@@ -104,34 +98,27 @@ class BRNet(nn.Module):
             x = self.layers[i](x)
         sources += [x]
 
-        for i in range(5, 10):
-            x = self.layers[i](x)
-        sources += [x]
-
-
         B, C, H, W = x.size()
-        darklevel = self.dark(x.reshape(B, H, W, C)) # (B, H, W, 1)
-        darklevel = darklevel.mean(dim = [1, 2], keepdim = True) # (B, 1, 1, 1)
 
-        ref = self.ref(x.reshape(B, H, W, C))
-        ref = ref.mean(dim = [1, 2], keepdim = True) # (B, 1, 1, 1)
+        darklevel = self.dark(x) # (B, 1, H, W)
+        darklevel_mean = darklevel.mean(dim = [2, 3], keepdim = True) # (B, 1, 1, 1)
 
-        illi = self.illuminaion(x.reshape(B, H, W, C))
-        illi = illi.mean(dim = [1, 2], keepdim = True) # (B, 1, 1, 1)
+        ref = self.ref(x) # (B, 3, H, W)
+        ref_mean = ref.flatten(start_dim=2).mean(dim=-1) # (B, 3)
+        ref_mean_average = ref_mean.mean(dim = 1, keepdim = True).reshape(-1, 1, 1, 1) # (B, 1, 1, 1)
 
         # reflectance만 알고싶을 때는, 끝까지 모델에 통과시킬 필요가 없음 
-        if not only_ref:
+        if not only_disentangle:
             for id in self.stage_id:
                 for i in id:
                     if self.layers[i].__class__.__name__ == 'Photoreceptor_Block':
-                        x = self.layers[i](x, darkness_level = darklevel.detach(), reflectance = ref.detach())
+                        x = self.layers[i](x, darkness_level = darklevel_mean.detach(), reflectance = ref_mean_average.detach()) #problem: detach?
                     else:
                         x = self.layers[i](x)
 
                 sources.append(x)
-                print(x.shape)
 
-        return sources, ref, illi, darklevel
+        return sources, darklevel_mean, ref, ref_mean
         
     def _check_layer_idx(self):
         for i, layer in enumerate(self.layers):
@@ -159,13 +146,13 @@ if __name__ == '__main__':
 
     with torch.no_grad():
         # Unpack all returned values from the forward method
-        sources, ref, illi, darklevel = detector(img, only_ref = False)
+        sources, darklevel_mean, ref, ref_mean = detector(img, only_disentangle = True)
 
     for i, x in enumerate(sources):
         print(f'output of {i}th stage:', x.shape)
     print(f"reflectance map: {ref.shape}")
-    print(f"illumination map: {illi.shape}")
-    print(f"darklevel: {darklevel.shape}")
+    print(f"reflectance_mean map: {ref_mean.shape}")
+    print(f"darklevel_mean: {darklevel_mean.shape}")
 
     print("="*40)
     print("Check later index:")
