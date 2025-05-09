@@ -45,6 +45,8 @@ _C.DARKLEVEL.SCALE = 0.9
 _C.LR_STEPS = (10000*2,12500*2,15000*2)
 _C.MAX_STEPS = 150000
 _C.EPOCHES = 100
+_C.SEED = 18412
+_C.BF16 = False
 
 # ablation config
 _C.ABLATION = EasyDict()
@@ -87,6 +89,7 @@ _C.WEIGHT.EQUAL_R = 0.01
 _C.WEIGHT.SMOOTH = 0.5
 _C.WEIGHT.RC = 0.001
 _C.WEIGHT.MC = 0.1
+_C.WEIGHT.DL = 0.05
 
 # face config
 _C.FACE = EasyDict()

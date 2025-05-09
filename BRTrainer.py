@@ -6,33 +6,42 @@ from tqdm import tqdm
 import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.optim import Adam
-from torch.nn import L1Loss, CrossEntropyLoss
 from torch.amp import autocast
-from src.models.our_model import Base_Model
-import numpy as np # Added for main block
+import numpy as np 
+import torch.nn as nn
+import torch.nn.functional as F
+from torchmetrics.functional import structural_similarity_index_measure as ssim
+
+from models.losses.multibox_loss import MultiBoxLoss
+from models.losses.enhance_loss import EnhanceLoss
+from utils.DarkISP import Low_Illumination_Degrading
+from models.data.augmentations import Compute_Darklevel
 
 # from src.utils.metrics import compute_metrics  # 필요시 사용
 
 class BR_Trainer:
     def __init__(self, 
                  model, 
-                 slm,
+                 net_enh,
                  train_loader,
                  val_loader,
                  optimizer,
-                 device,
                  cfg,
+                 args,
                  epochs=100,
+                 start_epoch = None,
                  eval_steps=500,
                  checkpoint_dir="./ckpt",
                  use_wandb=True,
-                 project_name="MB_SLM",
+                 project_name="Bio_Reflect_Net",
                  run_name=None
                  ):
         
         self.cfg = cfg
+        self.args = args
         self.model = model
-        self.slm = slm
+        self.net_enh = net_enh
+        self.device = "cuda" if args.cuda else "cpu"
 
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -41,58 +50,108 @@ class BR_Trainer:
         self.device = device
 
         self.epochs = epochs
+        self.start_epoch = start_epoch
+        self.iteration = 0 if start_epoch is None else start_epoch * len(train_loader)
+        self.step_index = 0
+
+
         self.eval_steps = eval_steps
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.use_wandb = use_wandb
 
-
+        
         # define loss functions
-        self.ce_loss = CrossEntropyLoss()
+        self.criterion = MultiBoxLoss(cfg, args.cuda)
+        self.criterion_enhance = EnhanceLoss()
+        self.criterion_dark = nn.BCELoss()
+
+        for i in range(2):
+            if self.cfg.LR_STEPS[i] <= self.iteration < self.cfg.LR_STEPS[i+1]:
+                self.step_index = i
+                break
 
 
     def compute_losses(self, batch):
+        """
+        return losses, time
+        """
 
-        # 데이터 로딩: UTKFaceDataset은 (img_tensor, label_tensor) 튜플을 반환
-        img, labels = batch
-        img = img.to(self.device)
-        labels = labels.to(self.device)
-
-        # 설정 파일(cfg)에서 지정한 인덱스로 주요 타겟 레이블 선택
-        target = labels[:, self.cfg.DATASET.TARGET_LABEL_IDX]
         with autocast('cuda', dtype=torch.bfloat16 if self.cfg.BF16 else torch.float32):
-            # generator forward pass 한 번 실행
-            logits, features = self.model(img)
+            images, targets, darklevels, img_paths = batch
+            images = images.to(self.device) / 255.
+            targetss = [ann.to(self.device) for ann in targets]
+            img_dark = torch.empty_like(images).cuda()
 
-            # SLM 통과하는 부분 추가해줘야 할듯
-            ce_loss = self.ce_loss(logits, target)
+            dl_light_targets = [darklevel.to(self.device) for darklevel in darklevels]
+            dl_dark_targets = []
 
-            # R1 정규화: 실제 이미지에 대한 gradient 계산
-            """
-            if train:
-                img_tmp = img.detach().requires_grad_(True)
-                r1_logits = self.model(img_tmp)
-                r1_grads = torch.autograd.grad(outputs=r1_logits.sum(), inputs=img_tmp, create_graph=True)[0]
-                r1_penalty = r1_grads.pow(2).sum([1, 2, 3]).mean()
-                r1_loss = r1_penalty * (self.cfg.R1_GAMMMA / 2)
-            else:
-                r1_loss = torch.tensor(0.0).to(img.device)
+            dark_target = []
+            dark_light_target = []
 
-            model_loss = ce_loss + self.cfg.R1_LAMBDA * r1_loss # .item() 제거 - backward를 위해 텐서 유지
-            """
-            r1_loss = torch.tensor(0.0).to(img.device) # R1 loss는 현재 사용하지 않음
-            model_loss = ce_loss + self.cfg.R1_LAMBDA * r1_loss
+            # Generation of degraded data and AET groundtruth
+            for i in range(images.shape[0]):
+                img_dark[i], _ = Low_Illumination_Degrading(images[i])
 
-        losses = {
-            "ce_loss": ce_loss,
-            'r1_loss': r1_loss,
-            "loss": model_loss
-        }
+                # computing dark-level labeling
+                dl_dark_targets.append(Compute_Darklevel(img_dark[i]))
 
-        
+           
+            self.iteration += 1
+            if self.iteration in self.cfg.LR_STEPS:
+                self.step_index += 1
+                adjust_learning_rate(self.optimizer, self.args.gamma, self.step_index)
 
-        #return model_loss, losses, outputs
-        return model_loss, losses, logits
+
+            dark_target = torch.stack(dark_target, dim=0).cuda()
+            dark_light_target = torch.stack(dark_light_target, dim=0).cuda()
+            
+
+            t0 = time.time()
+            R_dark_gt, I_dark = self.net_enh(img_dark)
+            R_light_gt, I_light = self.net_enh(images)
+
+            out, out2, out3, loss_mutual, loss_sotr = self.net(img_dark, images, I_dark.detach(), I_light.detach())
+            R_dark, R_light, R_dark_2, R_light_2 = out2
+            dl_dark, dl_light = out3
+            
+
+            # backprop
+            self.optim.zero_grad()
+
+            loss_l_pal1, loss_c_pal1 = self.criterion(out[:3], targetss)
+            loss_l_pal2, loss_c_pal2 = self.criterion(out[3:], targetss)
+
+            loss_enhance = self.criterion_enhance([R_dark, R_light, R_dark_2, R_light_2, I_dark.detach(), I_light.detach()], images, img_dark) * 0.1
+            loss_enhance2 = F.l1_loss(R_dark, R_dark_gt.detach()) + F.l1_loss(R_light, R_light_gt.detach()) + (
+                        1. - ssim(R_dark, R_dark_gt.detach())) + (1. - ssim(R_light, R_light_gt.detach()))
+            
+            # darklevel loss
+            loss_darklevel_dark = self.criterion_dark(dl_dark, dl_dark_targets)
+            loss_darklevel_light = self.criterion_dark(dl_light, dl_light_targets)
+            loss_darklevel = (loss_darklevel_dark + loss_darklevel_light ) * self.cfg.WEIGHT.DL
+
+
+            loss = loss_l_pal1 + loss_c_pal1 + loss_l_pal2 + loss_c_pal2 + loss_enhance2 + loss_enhance \
+                + loss_darklevel + loss_mutual + loss_sotr
+            
+            
+            t1 = time.time()
+            training_time = t1 - t0
+            losses = {
+                "loss_l_pal1": loss_l_pal1.item(),
+                "loss_c_pal1": loss_c_pal1.item(),
+                "loss_l_pal2": loss_l_pal2.item(),
+                "loss_c_pal2": loss_c_pal2.item(),
+                "loss_enhance": loss_enhance.item(),
+                "loss_enhance2": loss_enhance2.item(),
+                "loss_darklevel": loss_darklevel.item(),
+                "loss_mutual": loss_mutual.item(),
+                "loss_sotr": loss_sotr.item(),
+                "loss": loss.item()
+            }
+
+        return loss, losses, training_time
 
 
     def train_epoch(self, epoch):
@@ -101,19 +160,27 @@ class BR_Trainer:
         total_loss= 0.0
         eval_loss = 0.0
 
+        total_loss_l_pal1 = 0.0
+        total_loss_c_pal1 = 0.0
+        total_loss_l_pal2 = 0.0
+        total_loss_c_pal2 = 0.0
+        total_loss_enhance = 0.0
+        total_loss_enhance2 = 0.0
+        total_loss_darklevel = 0.0
+        total_loss_mutual = 0.0
+        total_loss_sotr = 0.0
+
 
         #for batch_idx, batch in enumerate(tqdm(self.train_loader, desc=f"Epoch {epoch+1}")):
         epoch_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}", unit="epoch", position=0, leave=True)
         for batch_idx, batch in enumerate(epoch_bar):
-            # 한 배치당 forward pass 1회로 두 손실을 모두 계산
-            # compute_losses 내부에서 autocast를 처리하므로 여기서는 제거
+            
             self.model.train()
-            model_loss, losses, outputs = self.compute_losses(batch)
+            model_loss, losses, _ = self.compute_losses(batch)
 
 
             self.model.requires_grad_(True)
             model_loss.backward() # retain_graph=True 불필요 (한 번의 forward로 계산)
-
 
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -125,15 +192,35 @@ class BR_Trainer:
 
             total_loss += model_loss.item()
 
+            # accumulate losses
+            total_loss_l_pal1 += losses['loss_l_pal1']
+            total_loss_c_pal1 += losses['loss_c_pal1']
+            total_loss_l_pal2 += losses['loss_l_pal2']
+            total_loss_c_pal2 += losses['loss_c_pal2']
+            total_loss_enhance += losses['loss_enhance']
+            total_loss_enhance2 += losses['loss_enhance2']
+            total_loss_darklevel += losses['loss_darklevel']
+            total_loss_mutual += losses['loss_mutual']
+            total_loss_sotr += losses['loss_sotr']
+
+            batch_num = batch_idx + 1
+
+
 
             # WandB 로깅 (10 iter마다)
             if self.use_wandb and (batch_idx % 10 == 0):
                 wandb.log({
-                    "train/batch_loss": model_loss.item(), # 현재 배치의 손실 기록
-                    "train/r1_loss": losses['r1_loss'].item(),
-                    "train/ce_loss": losses['ce_loss'].item(),
+                    "train/loss_l_pal1": total_loss_l_pal1/batch_num,
+                    "train/loss_c_pal1": total_loss_c_pal1/batch_num,
+                    "train/loss_l_pal2": total_loss_l_pal2/batch_num,
+                    "train/loss_c_pal2": total_loss_c_pal2/batch_num,
+                    "train/loss_enhance": total_loss_enhance/batch_num,
+                    "train/loss_enhance2": total_loss_enhance2/batch_num,
+                    "train/loss_darklevel": total_loss_darklevel/batch_num,
+                    "train/loss_mutual": total_loss_mutual/batch_num,
+                    "train/loss_sotr": total_loss_sotr/batch_num,
                     "epoch": epoch,
-                    "step": epoch * len(self.train_loader) + batch_idx
+                    "step": epoch * len(self.train_loader) + batch_num
                 })
 
 
@@ -194,6 +281,133 @@ class BR_Trainer:
 
         torch.save(self.model.state_dict(), os.path.join(self.checkpoint_dir, f"{cfg.MODEL_NAME}.pt"))
 
+
+    def train_epoch(self, epoch):
+            for epoch in range(self.start_, cfg.EPOCHES):
+                    losses = 0
+
+                    pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}/{cfg.EPOCHES}") #
+
+                    for batch_idx, (images, targets, _) in enumerate(train_loader):
+                        
+
+
+                        """
+                        if iteration % 100 == 0:
+                            tloss = losses / (batch_idx + 1)
+                            if local_rank == 0:
+                                print('Timer: %.4f' % (t1 - t0))
+                                print('epoch:' + repr(epoch) + ' || iter:' +
+                                    repr(iteration) + ' || Loss:%.4f' % (tloss))
+                                print('->> pal1 conf loss:{:.4f} || pal1 loc loss:{:.4f}'.format(
+                                    loss_c_pal1.item(), loss_l_pa1l.item()))
+                                print('->> pal2 conf loss:{:.4f} || pal2 loc loss:{:.4f}'.format(
+                                    loss_c_pal2.item(), loss_l_pa12.item()))
+                                print('->>lr:{}'.format(optimizer.param_groups[0]['lr']))
+                        """
+                        # 진행 상황을 실시간으로 업데이트
+                        pbar.set_postfix({
+                            "Loss": f"{losses / (batch_idx + 1):.4f}", 
+                            "Iter": iteration,
+                            "LR": f"{optimizer.param_groups[0]['lr']:.6f}"
+                        })
+                        pbar.update(1)
+
+                        if iteration != 0 and iteration % 5000 == 0:
+                            if local_rank == 0:
+                                print('Saving state, iter:', iteration)
+                                file = 'dsfd_' + repr(iteration) + '.pth'
+                                torch.save(dsfd_net.state_dict(),
+                                        os.path.join(save_folder, file))
+                        iteration += 1
+
+
+                        if iteration != 0 and iteration % 10 == 0 and args.use_wandb:
+                            wandb.log({
+                                "train/loc_pal1": loss_l_pa1l.item(),
+                                "train/conf_pal1": loss_c_pal1.item(),
+                                "train/loc_pal2": loss_l_pa12.item(),
+                                "train/conf_pal2": loss_c_pal2.item(),
+                                "train/overall_loss": loss.item(),
+                                "train/epoch": epoch,
+                                "train/step": iteration,
+
+                            })
+                    # if local_rank == 0:
+                    if (epoch + 1) >= 0:
+                        val(epoch, net, dsfd_net, net_enh, criterion)
+                    if iteration >= cfg.MAX_STEPS:
+                        break
+
+
+        def val(epoch, net, dsfd_net, net_enh, criterion):
+            net.eval()
+            step = 0
+            losses = torch.tensor(0.).cuda()
+            losses_enh = torch.tensor(0.).cuda()
+            t1 = time.time()
+
+            for batch_idx, (images, targets, img_paths) in enumerate(val_loader):
+                if args.cuda:
+                    images = Variable(images.cuda() / 255.)
+                    targets = [Variable(ann.cuda(), volatile=True)
+                            for ann in targets]
+                else:
+                    images = Variable(images / 255.)
+                    targets = [Variable(ann, volatile=True) for ann in targets]
+                img_dark = torch.stack([Low_Illumination_Degrading(images[i])[0] for i in range(images.shape[0])],
+                                    dim=0)
+                out, R = net.module.test_forward(img_dark)
+
+                loss_l_pa1l, loss_c_pal1 = criterion(out[:3], targets)
+                loss_l_pa12, loss_c_pal2 = criterion(out[3:], targets)
+                loss = loss_l_pa12 + loss_c_pal2
+
+                losses += loss.item()
+                step += 1
+            dist.reduce(losses, 0, op=dist.ReduceOp.SUM)
+
+            tloss = losses / step / torch.cuda.device_count()
+            t2 = time.time()
+            if local_rank == 0:
+                print('Timer: %.4f' % (t2 - t1))
+                print('test epoch:' + repr(epoch) + ' || Loss:%.4f' % (tloss))
+
+            global min_loss
+            if tloss < min_loss:
+                if local_rank == 0:
+                    print('Saving best state,epoch', epoch)
+                    torch.save(dsfd_net.state_dict(), os.path.join(
+                        save_folder, 'dsfd.pth'))
+                min_loss = tloss
+
+            if args.use_wandb:
+                        wandb.log({
+                            "val/loc_pal1": loss_l_pa1l.item(),
+                            "val/conf_pal1": loss_c_pal1.item(),
+                            "val/loc_pal2": loss_l_pa12.item(),
+                            "val/conf_pal2": loss_c_pal2.item(),
+                            "val/overall_loss": losses.item(),
+                            "val/total_loss": tloss,
+                        })
+
+            states = {
+                'epoch': epoch,
+                'weight': dsfd_net.state_dict(),
+            }
+            if local_rank == 0:
+                torch.save(states, os.path.join(save_folder, 'dsfd_checkpoint.pth'))
+
+
+def adjust_learning_rate(optimizer, gamma, step):
+    """Sets the learning rate to the initial LR decayed by 10 at every
+        specified step
+    # Adapted from PyTorch Imagenet example:
+    # https://github.com/pytorch/examples/blob/master/imagenet/main.py
+    """
+    # lr = args.lr * args.batch_size / 4 * torch.cuda.device_count() * (gamma ** (step))
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = param_group['lr'] * gamma
 
 if __name__ == "__main__":
     from models.utils.config import cfg

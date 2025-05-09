@@ -8,25 +8,23 @@ import os
 import random
 import time
 import torch
+import torch.nn as nn
 import argparse
 import torch.optim as optim
 import torch.utils.data as data
 import numpy as np
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
-import torch.nn.functional as F
 from torchmetrics.functional import structural_similarity_index_measure as ssim
 from tqdm import tqdm
 import wandb
 
 from models.data.config import cfg
-from models.losses.multibox_loss import MultiBoxLoss
-from models.losses.enhance_loss import EnhanceLoss
 from models.data.widerface import WIDERDetection, detection_collate
 from models.factory import build_net, basenet_factory
 from models.modules.enhancer import RetinexNet
-from utils.DarkISP import Low_Illumination_Degrading
 from PIL import Image
+from BRTrainer import BR_Trainer, adjust_learning_rate
 
 parser = argparse.ArgumentParser(
     description='DSFD face Detector Training With Pytorch')
@@ -122,7 +120,7 @@ val_loader = data.DataLoader(val_dataset, val_batchsize,
 min_loss = np.inf
 
 if args.use_wandb:
-    wandb.init(project = 'Bio-ReflectNet-Wider')
+    wandb.init(project = cfg.MODEL_NAME)
     wandb.config = {
         'learning_rate': args.lr,
         'epooch': cfg.EPOCHES,
@@ -148,6 +146,9 @@ def train():
         start_epoch = net.load_weights(args.resume)
         iteration = start_epoch * per_epoch_size
     else:
+        # not use pretrained model
+        # because we use our own model, not VGG
+        """
         base_weights = torch.load(args.save_folder + basenet)
         if local_rank == 0:
             print('Load base network {}'.format(args.save_folder + basenet))
@@ -155,6 +156,7 @@ def train():
             net.vgg.load_state_dict(base_weights)
         else:
             net.resnet.load_state_dict(base_weights)
+        """
 
 
     if not args.resume:
@@ -171,9 +173,9 @@ def train():
         net.ref.apply(net.weights_init)
 
     # Scaling the lr
-    lr = args.lr * np.round(np.sqrt(args.batch_size / 4 * torch.cuda.device_count()),4)
+    lr = args.lr * np.round(np.sqrt(args.batch_size / 4 * torch.cuda.device_count()),4) ##?????????????
     param_group = []
-    param_group += [{'params': dsfd_net.vgg.parameters(), 'lr': lr}]
+    param_group += [{'params': dsfd_net.brnet.parameters(), 'lr': lr}]
     param_group += [{'params': dsfd_net.extras.parameters(), 'lr': lr}]
     param_group += [{'params': dsfd_net.fpn_topdown.parameters(), 'lr': lr}]
     param_group += [{'params': dsfd_net.fpn_latlayer.parameters(), 'lr': lr}]
@@ -182,10 +184,10 @@ def train():
     param_group += [{'params': dsfd_net.conf_pal1.parameters(), 'lr': lr}]
     param_group += [{'params': dsfd_net.loc_pal2.parameters(), 'lr': lr}]
     param_group += [{'params': dsfd_net.conf_pal2.parameters(), 'lr': lr}]
-    param_group += [{'params': dsfd_net.vgg.ref.parameters(), 'lr': lr / 10.}]
-    param_group += [{'params': dsfd_net.vgg.dark.parameters(), 'lr': lr / 10.}]
+    param_group += [{'params': dsfd_net.brnet.ref.parameters(), 'lr': lr / 10.}]
+    param_group += [{'params': dsfd_net.brnet.dark.parameters(), 'lr': lr / 10.}]
 
-    optimizer = optim.SGD(param_group, lr=lr, momentum=args.momentum,
+    optimizer = optim.Adamw(param_group, lr=lr, momentum=args.momentum,
                           weight_decay=args.weight_decay)
 
     if args.cuda:
@@ -200,9 +202,7 @@ def train():
         cudnn.benchmark = False
         
 
-    criterion = MultiBoxLoss(cfg, args.cuda)
-    criterion_enhance = EnhanceLoss()
-    criterion_dark = ImprovedDarklevelLoss(cfg.WEIGHT.ALPHA, cfg.WEIGHT.BETA)
+    
     
     if local_rank == 0:
         print('Loading wider dataset...')
@@ -210,188 +210,22 @@ def train():
         print(args)
 
     for step in cfg.LR_STEPS:
+        # resume training의 경우에는 iteration에 맞게 lr 조정
+        # lr decay by 1/10 in [10000*2,12500*2,15000*2] iterations
         if iteration > step:
             step_index += 1
             adjust_learning_rate(optimizer, args.gamma, step_index)
+
     net_enh.eval()
     net.train()
-    corr_mat = None
-    for epoch in range(start_epoch, cfg.EPOCHES):
-        losses = 0
-
-        pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}/{cfg.EPOCHES}") #
-
-        for batch_idx, (images, targets, _) in enumerate(train_loader):
-            images = images.cuda() / 255.
-            targetss = [ann.cuda() for ann in targets]
-            img_dark = torch.empty_like(images).cuda()
-
-            dark_target = []
-            dark_light_target = []
-
-            # Generation of degraded data and AET groundtruth
-            for i in range(images.shape[0]):
-                img_dark[i], _ = Low_Illumination_Degrading(images[i])
-
-                # computing dark-level labeling
-                dark_target.append(Compute_Darklevel(images[i]))
-                dark_light_target.append(Compute_Darklevel(img_dark[i]))
-
-            if iteration in cfg.LR_STEPS:
-                step_index += 1
-                adjust_learning_rate(optimizer, args.gamma, step_index)
-
-            dark_target = torch.stack(dark_target, dim=0).cuda()
-            dark_light_target = torch.stack(dark_light_target, dim=0).cuda()
-            
-
-            t0 = time.time()
-            R_dark_gt, I_dark = net_enh(img_dark)
-            R_light_gt, I_light = net_enh(images)
-
-            out, out2, out3, loss_mutual, loss_sotr = net(img_dark, images, I_dark.detach(), I_light.detach())
-            R_dark, R_light, R_dark_2, R_light_2 = out2
-            dark, dark_light = out3
-            
-
-            # backprop
-            optimizer.zero_grad()
-
-            loss_l_pa1l, loss_c_pal1 = criterion(out[:3], targetss)
-            loss_l_pa12, loss_c_pal2 = criterion(out[3:], targetss)
-
-            loss_enhance = criterion_enhance([R_dark, R_light, R_dark_2, R_light_2, I_dark.detach(), I_light.detach()], images, img_dark) * 0.1
-            loss_enhance2 = F.l1_loss(R_dark, R_dark_gt.detach()) + F.l1_loss(R_light, R_light_gt.detach()) + (
-                        1. - ssim(R_dark, R_dark_gt.detach())) + (1. - ssim(R_light, R_light_gt.detach()))
-            
-            loss_darklevel = criterion_dark(dark, dark_light, dark_target, dark_light_target)
-
-            loss = loss_l_pa1l + loss_c_pal1 + loss_l_pa12 + loss_c_pal2 + loss_enhance2 + loss_enhance \
-                   + loss_darklevel + loss_mutual + loss_sotr
-            
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=35, norm_type=2)
-            optimizer.step()
-            t1 = time.time()
-            losses += loss.item()
-
-
-            """
-            if iteration % 100 == 0:
-                tloss = losses / (batch_idx + 1)
-                if local_rank == 0:
-                    print('Timer: %.4f' % (t1 - t0))
-                    print('epoch:' + repr(epoch) + ' || iter:' +
-                          repr(iteration) + ' || Loss:%.4f' % (tloss))
-                    print('->> pal1 conf loss:{:.4f} || pal1 loc loss:{:.4f}'.format(
-                        loss_c_pal1.item(), loss_l_pa1l.item()))
-                    print('->> pal2 conf loss:{:.4f} || pal2 loc loss:{:.4f}'.format(
-                        loss_c_pal2.item(), loss_l_pa12.item()))
-                    print('->>lr:{}'.format(optimizer.param_groups[0]['lr']))
-            """
-            # 진행 상황을 실시간으로 업데이트
-            pbar.set_postfix({
-                "Loss": f"{losses / (batch_idx + 1):.4f}", 
-                "Iter": iteration,
-                "LR": f"{optimizer.param_groups[0]['lr']:.6f}"
-            })
-            pbar.update(1)
-
-            if iteration != 0 and iteration % 5000 == 0:
-                if local_rank == 0:
-                    print('Saving state, iter:', iteration)
-                    file = 'dsfd_' + repr(iteration) + '.pth'
-                    torch.save(dsfd_net.state_dict(),
-                               os.path.join(save_folder, file))
-            iteration += 1
-
-
-            if iteration != 0 and iteration % 10 == 0 and args.use_wandb:
-                wandb.log({
-                    "train/loc_pal1": loss_l_pa1l.item(),
-                    "train/conf_pal1": loss_c_pal1.item(),
-                    "train/loc_pal2": loss_l_pa12.item(),
-                    "train/conf_pal2": loss_c_pal2.item(),
-                    "train/overall_loss": loss.item(),
-                    "train/epoch": epoch,
-                    "train/step": iteration,
-
-                })
-        # if local_rank == 0:
-        if (epoch + 1) >= 0:
-            val(epoch, net, dsfd_net, net_enh, criterion)
-        if iteration >= cfg.MAX_STEPS:
-            break
-
-
-def val(epoch, net, dsfd_net, net_enh, criterion):
-    net.eval()
-    step = 0
-    losses = torch.tensor(0.).cuda()
-    losses_enh = torch.tensor(0.).cuda()
-    t1 = time.time()
-
-    for batch_idx, (images, targets, img_paths) in enumerate(val_loader):
-        if args.cuda:
-            images = Variable(images.cuda() / 255.)
-            targets = [Variable(ann.cuda(), volatile=True)
-                       for ann in targets]
-        else:
-            images = Variable(images / 255.)
-            targets = [Variable(ann, volatile=True) for ann in targets]
-        img_dark = torch.stack([Low_Illumination_Degrading(images[i])[0] for i in range(images.shape[0])],
-                               dim=0)
-        out, R = net.module.test_forward(img_dark)
-
-        loss_l_pa1l, loss_c_pal1 = criterion(out[:3], targets)
-        loss_l_pa12, loss_c_pal2 = criterion(out[3:], targets)
-        loss = loss_l_pa12 + loss_c_pal2
-
-        losses += loss.item()
-        step += 1
-    dist.reduce(losses, 0, op=dist.ReduceOp.SUM)
-
-    tloss = losses / step / torch.cuda.device_count()
-    t2 = time.time()
-    if local_rank == 0:
-        print('Timer: %.4f' % (t2 - t1))
-        print('test epoch:' + repr(epoch) + ' || Loss:%.4f' % (tloss))
-
-    global min_loss
-    if tloss < min_loss:
-        if local_rank == 0:
-            print('Saving best state,epoch', epoch)
-            torch.save(dsfd_net.state_dict(), os.path.join(
-                save_folder, 'dsfd.pth'))
-        min_loss = tloss
-
-    if args.use_wandb:
-                wandb.log({
-                    "val/loc_pal1": loss_l_pa1l.item(),
-                    "val/conf_pal1": loss_c_pal1.item(),
-                    "val/loc_pal2": loss_l_pa12.item(),
-                    "val/conf_pal2": loss_c_pal2.item(),
-                    "val/overall_loss": losses.item(),
-                    "val/total_loss": tloss,
-                })
-
-    states = {
-        'epoch': epoch,
-        'weight': dsfd_net.state_dict(),
-    }
-    if local_rank == 0:
-        torch.save(states, os.path.join(save_folder, 'dsfd_checkpoint.pth'))
-
-
-def adjust_learning_rate(optimizer, gamma, step):
-    """Sets the learning rate to the initial LR decayed by 10 at every
-        specified step
-    # Adapted from PyTorch Imagenet example:
-    # https://github.com/pytorch/examples/blob/master/imagenet/main.py
-    """
-    # lr = args.lr * args.batch_size / 4 * torch.cuda.device_count() * (gamma ** (step))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = param_group['lr'] * gamma
+    
+    trainer = BR_Trainer(net, net_enh, train_loader, val_loader, optimizer,
+                         cfg, args, epochs=cfg.EPOCHES, eval_steps=5000,
+                         checkpoint_dir=save_folder)
+    
+    trainer.train()
+    
+    
 
 
 if __name__ == '__main__':
