@@ -220,8 +220,8 @@ def train():
     net.train()
     
     trainer = BR_Trainer(net, net_enh, train_loader, val_loader, optimizer,
-                         cfg, args, epochs=cfg.EPOCHES, eval_steps=5000,
-                         checkpoint_dir=save_folder)
+                         cfg, args, epochs=cfg.EPOCHES, start_epoch = start_epoch,
+                         eval_steps=5000, checkpoint_dir=save_folder)
     
     trainer.train()
     

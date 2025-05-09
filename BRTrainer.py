@@ -17,8 +17,21 @@ from models.losses.enhance_loss import EnhanceLoss
 from utils.DarkISP import Low_Illumination_Degrading
 from models.data.augmentations import Compute_Darklevel
 
-# from src.utils.metrics import compute_metrics  # 필요시 사용
 
+def adjust_learning_rate(optimizer, gamma, step):
+    """Sets the learning rate to the initial LR decayed by 10 at every
+        specified step
+    # Adapted from PyTorch Imagenet example:
+    # https://github.com/pytorch/examples/blob/master/imagenet/main.py
+    """
+    # lr = args.lr * args.batch_size / 4 * torch.cuda.device_count() * (gamma ** (step))
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = param_group['lr'] * gamma
+
+# ============================== 
+# Trainer Class
+# ============================== 
+        
 class BR_Trainer:
     def __init__(self, 
                  model, 
@@ -42,13 +55,14 @@ class BR_Trainer:
         self.model = model
         self.net_enh = net_enh
         self.device = "cuda" if args.cuda else "cpu"
-
         self.train_loader = train_loader
         self.val_loader = val_loader
-
         self.optim = optimizer
-        self.device = device
+        # self.device = device # __init__ 인자에서 device를 받지 않고 args.cuda로 결정
 
+        # 모델과 enhancer를 적절한 장치로 이동
+        self.model.to(self.device)
+        self.net_enh.to(self.device)
         self.epochs = epochs
         self.start_epoch = start_epoch
         self.iteration = 0 if start_epoch is None else start_epoch * len(train_loader)
@@ -64,12 +78,9 @@ class BR_Trainer:
         # define loss functions
         self.criterion = MultiBoxLoss(cfg, args.cuda)
         self.criterion_enhance = EnhanceLoss()
-        self.criterion_dark = nn.BCELoss()
+        self.criterion_dark = nn.MSELoss()
 
-        for i in range(2):
-            if self.cfg.LR_STEPS[i] <= self.iteration < self.cfg.LR_STEPS[i+1]:
-                self.step_index = i
-                break
+        
 
 
     def compute_losses(self, batch):
@@ -80,38 +91,45 @@ class BR_Trainer:
         with autocast('cuda', dtype=torch.bfloat16 if self.cfg.BF16 else torch.float32):
             images, targets, darklevels, img_paths = batch
             images = images.to(self.device) / 255.
-            targetss = [ann.to(self.device) for ann in targets]
+            detection_targets = [ann.to(self.device) for ann in targets] # 변수명 명확화
             img_dark = torch.empty_like(images).cuda()
 
-            dl_light_targets = [darklevel.to(self.device) for darklevel in darklevels]
-            dl_dark_targets = []
-
-            dark_target = []
-            dark_light_target = []
+            # darklevels는 WIDERDetection에서 로드된 값 (아마도 원본 이미지에서 계산된 값)
+            # Compute_Darklevel 함수는 (C,H,W) 형태의 단일 이미지를 입력으로 받음
+            # DataLoader에서 오는 darklevels의 형태와 Compute_Darklevel의 사용 일관성 확인 필요
+            
+            # dl_light_gt와 dl_dark_gt를 생성
+            dl_light_gt_list = []
+            dl_dark_gt_list = []
 
             # Generation of degraded data and AET groundtruth
             for i in range(images.shape[0]):
                 img_dark[i], _ = Low_Illumination_Degrading(images[i])
-
                 # computing dark-level labeling
-                dl_dark_targets.append(Compute_Darklevel(img_dark[i]))
-
+                # Compute_Darklevel은 (C,H,W) 텐서를 받아 스칼라 텐서를 반환해야 함
+                # WIDERDetection에서 오는 darklevels가 이미 계산된 값이라면 그것을 사용
+                # 아니라면 여기서 계산
+                dl_dark_gt_list.append(Compute_Darklevel(img_dark[i].cpu()).to(self.device)) # CPU에서 계산 후 GPU로
+                dl_light_gt_list.append(darklevels[i].to(self.device) if isinstance(darklevels, list) else darklevels[i:i+1].to(self.device)) # 데이터로더 출력에 따라 수정
            
             self.iteration += 1
             if self.iteration in self.cfg.LR_STEPS:
                 self.step_index += 1
-                adjust_learning_rate(self.optimizer, self.args.gamma, self.step_index)
+                adjust_learning_rate(self.optim, self.args.gamma, self.step_index) # self.optim 사용
 
+            if self.iteration >= self.cfg.MAX_STEPS:
+                # MAX_STEPS 도달 시 None 반환하여 train_epoch에서 처리하도록 함
+                return None, None, None
 
-            dark_target = torch.stack(dark_target, dim=0).cuda()
-            dark_light_target = torch.stack(dark_light_target, dim=0).cuda()
-            
+            dl_dark_gt = torch.stack(dl_dark_gt_list).unsqueeze(1).unsqueeze(2).unsqueeze(3) # (B, 1, 1, 1) 형태로
+            dl_light_gt = torch.stack(dl_light_gt_list).unsqueeze(1).unsqueeze(2).unsqueeze(3) # (B, 1, 1, 1) 형태로
 
             t0 = time.time()
             R_dark_gt, I_dark = self.net_enh(img_dark)
             R_light_gt, I_light = self.net_enh(images)
 
-            out, out2, out3, loss_mutual, loss_sotr = self.net(img_dark, images, I_dark.detach(), I_light.detach())
+            # self.model (DSFD_BRNet 인스턴스) 호출
+            out, out2, out3, loss_mutual, loss_sotr = self.model(img_dark, images, I_dark.detach(), I_light.detach())
             R_dark, R_light, R_dark_2, R_light_2 = out2
             dl_dark, dl_light = out3
             
@@ -119,16 +137,16 @@ class BR_Trainer:
             # backprop
             self.optim.zero_grad()
 
-            loss_l_pal1, loss_c_pal1 = self.criterion(out[:3], targetss)
-            loss_l_pal2, loss_c_pal2 = self.criterion(out[3:], targetss)
+            loss_l_pal1, loss_c_pal1 = self.criterion(out[:3], detection_targets)
+            loss_l_pal2, loss_c_pal2 = self.criterion(out[3:], detection_targets)
 
             loss_enhance = self.criterion_enhance([R_dark, R_light, R_dark_2, R_light_2, I_dark.detach(), I_light.detach()], images, img_dark) * 0.1
             loss_enhance2 = F.l1_loss(R_dark, R_dark_gt.detach()) + F.l1_loss(R_light, R_light_gt.detach()) + (
                         1. - ssim(R_dark, R_dark_gt.detach())) + (1. - ssim(R_light, R_light_gt.detach()))
             
             # darklevel loss
-            loss_darklevel_dark = self.criterion_dark(dl_dark, dl_dark_targets)
-            loss_darklevel_light = self.criterion_dark(dl_light, dl_light_targets)
+            loss_darklevel_dark = self.criterion_dark(dl_dark, dl_dark_gt) # dl_dark_gt 사용
+            loss_darklevel_light = self.criterion_dark(dl_light, dl_light_gt) # dl_light_gt 사용
             loss_darklevel = (loss_darklevel_dark + loss_darklevel_light ) * self.cfg.WEIGHT.DL
 
 
@@ -148,7 +166,7 @@ class BR_Trainer:
                 "loss_darklevel": loss_darklevel.item(),
                 "loss_mutual": loss_mutual.item(),
                 "loss_sotr": loss_sotr.item(),
-                "loss": loss.item()
+                "total_loss": loss.item() # 키 이름 변경하여 명확성 확보
             }
 
         return loss, losses, training_time
@@ -156,7 +174,6 @@ class BR_Trainer:
 
     def train_epoch(self, epoch):
         self.model.train()
-
         total_loss= 0.0
         eval_loss = 0.0
 
@@ -170,16 +187,18 @@ class BR_Trainer:
         total_loss_mutual = 0.0
         total_loss_sotr = 0.0
 
+        for batch_idx, batch in enumerate(self.train_loader):
 
-        #for batch_idx, batch in enumerate(tqdm(self.train_loader, desc=f"Epoch {epoch+1}")):
-        epoch_bar = tqdm(self.train_loader, desc=f"Epoch {epoch+1}", unit="epoch", position=0, leave=True)
-        for batch_idx, batch in enumerate(epoch_bar):
+            if self.iteration >= self.cfg.MAX_STEPS:
+                return False
             
-            self.model.train()
+            # self.model.train() # 에폭 시작 시 한 번만 호출
             model_loss, losses, _ = self.compute_losses(batch)
 
+            if model_loss is None: # MAX_STEPS 도달 시
+                return False
 
-            self.model.requires_grad_(True)
+
             model_loss.backward() # retain_graph=True 불필요 (한 번의 forward로 계산)
 
             # Gradient clipping
@@ -208,7 +227,7 @@ class BR_Trainer:
 
 
             # WandB 로깅 (10 iter마다)
-            if self.use_wandb and (batch_idx % 10 == 0):
+            if self.use_wandb and (batch_idx % 10 == 0 and batch_idx != 0):
                 wandb.log({
                     "train/loss_l_pal1": total_loss_l_pal1/batch_num,
                     "train/loss_c_pal1": total_loss_c_pal1/batch_num,
@@ -226,8 +245,16 @@ class BR_Trainer:
 
             if batch_idx + 1 == len(self.train_loader):
                 eval_loss = self.evaluate()
-            epoch_bar.set_postfix(train_loss=f"{total_loss/((batch_idx +1) * self.cfg.BATCH_SIZE):.6f}", eval_loss=f"{eval_loss/len(self.val_loader):.6f}")
 
+            self.epoch_bar.set_postfix({
+                "Train_Loss" : f"{total_loss/((batch_idx +1) * self.args.batch_size):.6f}", # self.args.batch_size 사용
+                "Eval_Loss" : f"{eval_loss/len(self.val_loader):.6f}",
+                "Epoch": epoch,
+                "Iteration": self.iteration,
+                "LR": f"{self.optim.param_groups[0]['lr']:.6f}",
+                })
+            
+            self.epoch_bar.update(1)
 
         
 
@@ -235,179 +262,101 @@ class BR_Trainer:
 
     def evaluate(self):
         self.model.eval()
-        total_loss = 0.0
+        total_val_loss = 0.0
 
-        log_images = []
+        total_val_loss_l_pal1 = 0.0
+        total_val_loss_c_pal1 = 0.0
+        total_val_loss_l_pal2 = 0.0
+        total_val_loss_c_pal2 = 0.0
+        total_val_loss_enhance = 0.0
+        total_val_loss_enhance2 = 0.0
+        total_val_loss_darklevel = 0.0
+        total_val_loss_mutual = 0.0
+        total_val_loss_sotr = 0.0
+
         with torch.no_grad():
-            cnt = 0
+            cnt = 0 
+
             for batch in self.val_loader:
-                model_loss, losses, outputs = self.compute_losses(batch)
-                total_loss += model_loss.item()
+                model_loss, losses_dict, _ = self.compute_losses(batch)
+                if model_loss is None: # MAX_STEPS 도달 시 (평가 중에는 발생하지 않아야 하지만 안전장치)
+                    continue
+
+                total_val_loss += model_loss.item()
                 cnt += 1
+                
+                total_val_loss_l_pal1 += losses_dict['loss_l_pal1']
+                total_val_loss_c_pal1 += losses_dict['loss_c_pal1']
+                total_val_loss_l_pal2 += losses_dict['loss_l_pal2']
+                total_val_loss_c_pal2 += losses_dict['loss_c_pal2']
+                total_val_loss_enhance += losses_dict['loss_enhance']
+                total_val_loss_enhance2 += losses_dict['loss_enhance2']
+                total_val_loss_darklevel += losses_dict['loss_darklevel']
+                total_val_loss_mutual += losses_dict['loss_mutual']
+                total_val_loss_sotr += losses_dict['loss_sotr']
+
+                
 
         if self.use_wandb:
             wandb.log({
-                "eval/avg_loss": total_loss / cnt, # Use average loss
-                "eval/r1_loss": losses['r1_loss'].item(), # Note: losses from the *last* batch
-                "eval/ce_loss": losses['ce_loss'].item(),
-            })
-        if self.use_wandb and log_images:
-            wandb.log({
-                "eval/images": [wandb.Image(img) for img in log_images]
+                "val/loss_l_pal1": total_val_loss_l_pal1 / cnt,
+                "val/loss_c_pal1": total_val_loss_c_pal1 / cnt,
+                "val/loss_l_pal2": total_val_loss_l_pal2 / cnt,
+                "val/loss_c_pal2": total_val_loss_c_pal2 / cnt,
+                "val/loss_enhance": total_val_loss_enhance / cnt,
+                "val/loss_enhance2": total_val_loss_enhance2 / cnt,
+                "val/loss_darklevel": total_val_loss_darklevel / cnt,
+                "val/loss_mutual": total_val_loss_mutual / cnt,
+                "val/loss_sotr": total_val_loss_sotr / cnt,
+                "val/total_loss": total_val_loss / cnt
             })
 
-
-        return total_loss
+        return total_val_loss / cnt if cnt > 0 else 0.0 # 평균 손실 반환
 
     def save_checkpoint(self, epoch):
+        # 모델을 CPU로 옮겨서 state_dict를 가져옵니다.
+        model_state_dict = self.model.module.to('cpu').state_dict() if isinstance(self.model, nn.DataParallel) or isinstance(self.model, nn.parallel.DistributedDataParallel)\
+            else self.model.to('cpu').state_dict()
+        
         checkpoint = {
-            "model": self.model.state_dict(),
+            "model": model_state_dict,
             "optimizer": self.optim.state_dict(),
             "epoch": epoch
         }
         torch.save(checkpoint, os.path.join(self.checkpoint_dir, f"{self.cfg.MODEL_NAME}.pt"))
+        
+        # 모델을 원래 device로 다시 옮기기 (학습 계속하기 위해)
+        if isinstance(self.model, nn.DataParallel) or isinstance(self.model, nn.parallel.DistributedDataParallel):
+            self.model.module.to(self.device) # DataParallel/DDP의 경우 원래 모듈을 옮김
+        else:
+            self.model.to(self.device)
 
     def train(self):
-        for epoch in range(self.epochs):
-            start_time = time.time()
+        self.net_enh.eval()
+
+        self.epoch_bar = tqdm(total=self.epochs, desc="Training Progress")
+        for epoch in self.epoch_bar:
             avg_loss = self.train_epoch(epoch)
-            if self.use_wandb:
-                wandb.log({
-                    "epoch/avg_loss": avg_loss,
-                    "epoch/time": time.time() - start_time
-                })
+
+            
             if (epoch + 1) % 5 == 0:
                 self.save_checkpoint(epoch + 1)
 
-        torch.save(self.model.state_dict(), os.path.join(self.checkpoint_dir, f"{cfg.MODEL_NAME}.pt"))
+            if not avg_loss: #train_epoch 메소드가 False를 리턴하면 종료
+                print("Current Step exeeds the Maximum Steps")
+                break
+
+        # 학습 완료 후 최종 모델 저장 시에도 CPU로 옮겨서 저장
+        if self.args.local_rank == 0: # 메인 프로세스에서만 저장
+            final_model_state_dict = self.model.module.to('cpu').state_dict() if isinstance(self.model, nn.DataParallel) or isinstance(self.model, nn.parallel.DistributedDataParallel) \
+                else self.model.to('cpu').state_dict()
+            torch.save(final_model_state_dict, os.path.join(self.checkpoint_dir, f"{self.cfg.MODEL_NAME}_final.pt"))
+            if isinstance(self.model, nn.DataParallel) or isinstance(self.model, nn.parallel.DistributedDataParallel):
+                self.model.module.to(self.device)
+            else:
+                self.model.to(self.device)
 
 
-    def train_epoch(self, epoch):
-            for epoch in range(self.start_, cfg.EPOCHES):
-                    losses = 0
-
-                    pbar = tqdm(total=len(train_loader), desc=f"Epoch {epoch+1}/{cfg.EPOCHES}") #
-
-                    for batch_idx, (images, targets, _) in enumerate(train_loader):
-                        
-
-
-                        """
-                        if iteration % 100 == 0:
-                            tloss = losses / (batch_idx + 1)
-                            if local_rank == 0:
-                                print('Timer: %.4f' % (t1 - t0))
-                                print('epoch:' + repr(epoch) + ' || iter:' +
-                                    repr(iteration) + ' || Loss:%.4f' % (tloss))
-                                print('->> pal1 conf loss:{:.4f} || pal1 loc loss:{:.4f}'.format(
-                                    loss_c_pal1.item(), loss_l_pa1l.item()))
-                                print('->> pal2 conf loss:{:.4f} || pal2 loc loss:{:.4f}'.format(
-                                    loss_c_pal2.item(), loss_l_pa12.item()))
-                                print('->>lr:{}'.format(optimizer.param_groups[0]['lr']))
-                        """
-                        # 진행 상황을 실시간으로 업데이트
-                        pbar.set_postfix({
-                            "Loss": f"{losses / (batch_idx + 1):.4f}", 
-                            "Iter": iteration,
-                            "LR": f"{optimizer.param_groups[0]['lr']:.6f}"
-                        })
-                        pbar.update(1)
-
-                        if iteration != 0 and iteration % 5000 == 0:
-                            if local_rank == 0:
-                                print('Saving state, iter:', iteration)
-                                file = 'dsfd_' + repr(iteration) + '.pth'
-                                torch.save(dsfd_net.state_dict(),
-                                        os.path.join(save_folder, file))
-                        iteration += 1
-
-
-                        if iteration != 0 and iteration % 10 == 0 and args.use_wandb:
-                            wandb.log({
-                                "train/loc_pal1": loss_l_pa1l.item(),
-                                "train/conf_pal1": loss_c_pal1.item(),
-                                "train/loc_pal2": loss_l_pa12.item(),
-                                "train/conf_pal2": loss_c_pal2.item(),
-                                "train/overall_loss": loss.item(),
-                                "train/epoch": epoch,
-                                "train/step": iteration,
-
-                            })
-                    # if local_rank == 0:
-                    if (epoch + 1) >= 0:
-                        val(epoch, net, dsfd_net, net_enh, criterion)
-                    if iteration >= cfg.MAX_STEPS:
-                        break
-
-
-        def val(epoch, net, dsfd_net, net_enh, criterion):
-            net.eval()
-            step = 0
-            losses = torch.tensor(0.).cuda()
-            losses_enh = torch.tensor(0.).cuda()
-            t1 = time.time()
-
-            for batch_idx, (images, targets, img_paths) in enumerate(val_loader):
-                if args.cuda:
-                    images = Variable(images.cuda() / 255.)
-                    targets = [Variable(ann.cuda(), volatile=True)
-                            for ann in targets]
-                else:
-                    images = Variable(images / 255.)
-                    targets = [Variable(ann, volatile=True) for ann in targets]
-                img_dark = torch.stack([Low_Illumination_Degrading(images[i])[0] for i in range(images.shape[0])],
-                                    dim=0)
-                out, R = net.module.test_forward(img_dark)
-
-                loss_l_pa1l, loss_c_pal1 = criterion(out[:3], targets)
-                loss_l_pa12, loss_c_pal2 = criterion(out[3:], targets)
-                loss = loss_l_pa12 + loss_c_pal2
-
-                losses += loss.item()
-                step += 1
-            dist.reduce(losses, 0, op=dist.ReduceOp.SUM)
-
-            tloss = losses / step / torch.cuda.device_count()
-            t2 = time.time()
-            if local_rank == 0:
-                print('Timer: %.4f' % (t2 - t1))
-                print('test epoch:' + repr(epoch) + ' || Loss:%.4f' % (tloss))
-
-            global min_loss
-            if tloss < min_loss:
-                if local_rank == 0:
-                    print('Saving best state,epoch', epoch)
-                    torch.save(dsfd_net.state_dict(), os.path.join(
-                        save_folder, 'dsfd.pth'))
-                min_loss = tloss
-
-            if args.use_wandb:
-                        wandb.log({
-                            "val/loc_pal1": loss_l_pa1l.item(),
-                            "val/conf_pal1": loss_c_pal1.item(),
-                            "val/loc_pal2": loss_l_pa12.item(),
-                            "val/conf_pal2": loss_c_pal2.item(),
-                            "val/overall_loss": losses.item(),
-                            "val/total_loss": tloss,
-                        })
-
-            states = {
-                'epoch': epoch,
-                'weight': dsfd_net.state_dict(),
-            }
-            if local_rank == 0:
-                torch.save(states, os.path.join(save_folder, 'dsfd_checkpoint.pth'))
-
-
-def adjust_learning_rate(optimizer, gamma, step):
-    """Sets the learning rate to the initial LR decayed by 10 at every
-        specified step
-    # Adapted from PyTorch Imagenet example:
-    # https://github.com/pytorch/examples/blob/master/imagenet/main.py
-    """
-    # lr = args.lr * args.batch_size / 4 * torch.cuda.device_count() * (gamma ** (step))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = param_group['lr'] * gamma
 
 if __name__ == "__main__":
     from models.utils.config import cfg
