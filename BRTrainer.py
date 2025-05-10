@@ -107,8 +107,7 @@ class BR_Trainer:
                 img_dark[i], _ = Low_Illumination_Degrading(images[i])
                 # computing dark-level labeling
                 # Compute_Darklevel은 (C,H,W) 텐서를 받아 스칼라 텐서를 반환해야 함
-                # WIDERDetection에서 오는 darklevels가 이미 계산된 값이라면 그것을 사용
-                # 아니라면 여기서 계산
+
                 dl_dark_gt_list.append(Compute_Darklevel(img_dark[i].cpu()).to(self.device)) # CPU에서 계산 후 GPU로
                 dl_light_gt_list.append(darklevels[i].to(self.device) if isinstance(darklevels, list) else darklevels[i:i+1].to(self.device)) # 데이터로더 출력에 따라 수정
            
