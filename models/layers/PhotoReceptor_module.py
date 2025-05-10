@@ -111,7 +111,7 @@ class Rod_Block(nn.Module):
 
         if self.cfg.ABLATION.USE_GAIN:
             x = self.gain(x)
-        if self.cfg.ABLATION.USE_TAPETUM:
+        if self.cfg.ABLATION.USE_TAPETUM and reflectance is not None:
             x = self.tapetum(x, reflectance)
         
         out = self.layers(x)
