@@ -2,3 +2,4 @@ __pycache__
 dataset/
 weights/
 result/
+output_images/
