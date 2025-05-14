@@ -548,6 +548,10 @@ if __name__ == '__main__':
     print("\n===== TRAIN 모드 테스트 =====")
     train_phase = 'train'
     
+    # 장치 설정 (GPU 사용 가능하면 GPU, 아니면 CPU)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"사용 장치: {device}")
+
     print(f"DSFD 모델 빌드 중... (phase='{train_phase}', num_classes={num_classes})")
     try:
         train_model = build_net_DSFD(phase=train_phase, num_classes=num_classes)
@@ -559,12 +563,18 @@ if __name__ == '__main__':
         traceback.print_exc()
         exit()
 
+    # 모델을 설정된 장치로 이동
+    train_model.to(device)
+    print(f"모델을 {device}로 이동 완료.")
+
     # forward 메서드 실행
     print("forward 메서드 실행 중...")
     try:
         # train 모드에서는 forward 메서드에 4개의 입력이 필요함
+        # 입력 텐서도 동일한 장치로 이동
         outputs, reflectances, darklevels, loss_mutual, loss_sotr = train_model(
-            dummy_input, dummy_input_light, dummy_I, dummy_I_light
+            dummy_input.to(device), dummy_input_light.to(device),
+            dummy_I.to(device), dummy_I_light.to(device)
         )
         print("forward 실행 성공.")
 
