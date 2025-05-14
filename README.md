@@ -44,6 +44,21 @@ pip install -r requirements.txt
 - Download the [pretrained weight](https://drive.google.com/file/d/1MaRK-VZmjBvkm79E1G77vFccb_9GWrfG/view?usp=drive_link) of Retinex Decomposition Net.
 
 
+Organize the folders as:
+
+```
+.
+├── utils
+├── weights
+│   ├── decomp.pth
+├── dataset
+│   ├── wider_face_train.txt
+│   ├── wider_face_val.txt
+│   ├── WiderFace
+│   │   ├── WIDER_train
+│   │   └── WIDER_val
+```
+
 
 ## Acknowledgement
 
