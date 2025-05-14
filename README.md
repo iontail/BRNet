@@ -13,9 +13,10 @@
 
 ## :sparkles: Bio-Receptor Network (BRNet)
 Sungkyunkwan University Applied Arificial Intelligence
-2025-1 Undergraduate Research Program
 
+2025-1 Undergraduate Research Program (URP)
 
+![overview](./assets/BRNet.png)
 
 ## :wrench: Installation
 
@@ -41,10 +42,12 @@ pip install -r requirements.txt
 - Download the WIDER Face Training & Validation images at [WIDER FACE](http://shuoyang1213.me/WIDERFACE/).
 - Obtain the annotations of [training set](https://github.com/daooshee/HLA-Face-Code/blob/main/train_code/dataset/wider_face_train.txt) and [validation set](https://github.com/daooshee/HLA-Face-Code/blob/main/train_code/dataset/wider_face_val.txt).
 - Download the [pretrained weight](https://drive.google.com/file/d/1MaRK-VZmjBvkm79E1G77vFccb_9GWrfG/view?usp=drive_link) of Retinex Decomposition Net.
-- Prepare the [pretrained weight](https://drive.google.com/file/d/1whV71K42YYduOPjTTljBL8CB-Qs4Np6U/view?usp=drive_link) of the base network.
+
 
 
 ## Acknowledgement
 
 We thank [DAI-Net.Pytorch](https://github.com/ZPDu/DAI-Net.git), [DSFD.pytorch](https://github.com/yxlijun/DSFD.pytorch), [RetinexNet_PyTorch](https://github.com/aasharma90/RetinexNet_PyTorch) for their amazing works!
+
+We referenced the pytorch implementation of [DAI-Net](https://github.com/ZPDu/DAI-Net.git)! 
 
