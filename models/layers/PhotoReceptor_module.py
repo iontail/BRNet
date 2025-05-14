@@ -17,6 +17,8 @@ class GainBlock(nn.Module):
         self.activation = str_to_act[activation]
 
         # problems: 왜 중간에 차원을 4로 줄이지?
+        # to reduce the number of parameters
+        # acts like FFN but for efficiency 
         self.layers = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(self.in_dim, self.h_dim // 4, 1),
@@ -85,13 +87,10 @@ class Rod_Block(nn.Module):
         self.bn2 = str_to_norm[normalize](out_dim)
 
 
-        # GAIN이랑 TAPETUM을 모두 사용하지 않는 경우에는 mid_dim을 out_dim으로 설정해서 차원 맞춰줌
-        
-
         self.gain = GainBlock(in_dim, in_dim, activation = self.activation)
         self.tapetum = ReflectiveFeedback(in_dim, activation = self.activation) # problems: mid_dim??
-        self.dcn = DCNv3(in_dim, out_dim, kernel_size = 3, padding = 1, stride = 1)
-        self.conv = nn.Conv2d(out_dim, out_dim, kernel_size = 3, padding = 1) #problems: kernel_size = 3?
+        self.dcn = DCNv3(in_dim, in_dim, kernel_size = 3, padding = 1, stride = 1)
+        self.conv = nn.Conv2d(in_dim, out_dim, kernel_size = 1, padding = 0) 
 
         
         self.layers = nn.Sequential(
@@ -111,8 +110,10 @@ class Rod_Block(nn.Module):
 
         if self.cfg.ABLATION.USE_GAIN:
             x = self.gain(x)
+
         if self.cfg.ABLATION.USE_TAPETUM and reflectance is not None:
             x = self.tapetum(x, reflectance)
+
         
         out = self.layers(x)
 

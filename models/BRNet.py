@@ -135,6 +135,8 @@ class BRNet(nn.Module):
                 for i in id:
                     if self.layers[i].__class__.__name__ == 'Photoreceptor_Block':
                         x = self.layers[i](x, darkness_level = darklevel_mean.detach(), reflectance = ref_mean_average.detach()) #problem: detach?
+                        # use detach to make darklevel/reflectance branch be as independent as possible 
+                        # with photo receptor block
                     else:
                         x = self.layers[i](x)
 

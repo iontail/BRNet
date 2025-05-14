@@ -46,8 +46,7 @@ class BR_Trainer:
                  eval_steps=500,
                  checkpoint_dir="./ckpt",
                  use_wandb=True,
-                 project_name="Bio_Reflect_Net",
-                 run_name=None
+                 project_name="Bio_Reflect_Net"
                  ):
         
         self.cfg = cfg
@@ -92,9 +91,8 @@ class BR_Trainer:
             images, targets, darklevels, img_paths = batch
             images = images.to(self.device) / 255.
             detection_targets = [ann.to(self.device) for ann in targets] # 변수명 명확화
-            img_dark = torch.empty_like(images).cuda()
+            img_dark = torch.empty_like(images).to(self.device) 
 
-            # darklevels는 WIDERDetection에서 로드된 값 (아마도 원본 이미지에서 계산된 값)
             # Compute_Darklevel 함수는 (C,H,W) 형태의 단일 이미지를 입력으로 받음
             # DataLoader에서 오는 darklevels의 형태와 Compute_Darklevel의 사용 일관성 확인 필요
             
@@ -148,6 +146,9 @@ class BR_Trainer:
             loss_darklevel_light = self.criterion_dark(dl_light, dl_light_gt) # dl_light_gt 사용
             loss_darklevel = (loss_darklevel_dark + loss_darklevel_light ) * self.cfg.WEIGHT.DL
 
+            if not self.cfg.ABLATION.SOTR: # not using S-OTR loss
+                loss_sotr = 0
+
 
             loss = loss_l_pal1 + loss_c_pal1 + loss_l_pal2 + loss_c_pal2 + loss_enhance2 + loss_enhance \
                 + loss_darklevel + loss_mutual + loss_sotr
@@ -198,7 +199,7 @@ class BR_Trainer:
                 return False
 
 
-            model_loss.backward() # retain_graph=True 불필요 (한 번의 forward로 계산)
+            model_loss.backward()
 
             # Gradient clipping
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
@@ -313,7 +314,9 @@ class BR_Trainer:
         return total_val_loss / cnt if cnt > 0 else 0.0 # 평균 손실 반환
 
     def save_checkpoint(self, epoch):
-        # 모델을 CPU로 옮겨서 state_dict를 가져옵니다.
+        # Move Model to CPU
+        # DDP의 경우 module 속성을 사용하여 모델을 가져옴
+        # 저장할떄 GPU에 올려있는 상태로 저장하면 gpu 정보도 저장되서 크기가 너무 커짐
         model_state_dict = self.model.module.to('cpu').state_dict() if isinstance(self.model, nn.DataParallel) or isinstance(self.model, nn.parallel.DistributedDataParallel)\
             else self.model.to('cpu').state_dict()
         
@@ -358,51 +361,4 @@ class BR_Trainer:
 
 
 if __name__ == "__main__":
-    from models.utils.config import cfg
-    from datasets.dataset_UTKFace import UTKFace_Dataset, augment_train, augment_test
-    import os # For path joining
-
-
-    # --- Configuration ---
-    if not os.path.exists(cfg.DATASET.ROOT_DIR):
-         raise FileNotFoundError(f"UTKFace dataset not found at {cfg.DATASET.ROOT_DIR}. Please set cfg.DATASET.ROOT_DIR correctly.")
-
-    # --- Dataset & DataLoader ---
-    train_ds = UTKFace_Dataset(
-        root_dir=cfg.DATASET.ROOT_DIR,
-        train_mode=True,
-        transform=augment_train, # Use train transforms
-        test_split_ratio=cfg.DATASET.TEST_SPLIT_RATIO,
-        random_state=cfg.DATASET.RANDOM_STATE
-    )
-    val_ds = UTKFace_Dataset(
-        root_dir=cfg.DATASET.ROOT_DIR,
-        train_mode=False,
-        transform=augment_test, # Use test transforms
-        test_split_ratio=cfg.DATASET.TEST_SPLIT_RATIO,
-        random_state=cfg.DATASET.RANDOM_STATE
-    )
-
-    train_loader = DataLoader(train_ds, batch_size=cfg.BATCH_SIZE, shuffle=True, num_workers=cfg.DATASET.NUM_WORKERS)
-    val_loader   = DataLoader(val_ds,   batch_size=cfg.BATCH_SIZE, shuffle=False, num_workers=cfg.DATASET.NUM_WORKERS)
-
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model  = Base_Model(cfg=cfg).to(device) # Ensure Base_Model's output matches cfg.MODEL.NUM_CLASSES
-    optim  = Adam(model.parameters(), lr=1e-3)
-
-
-    trainer = MB_SLMTrainer(
-        model         = model,
-        slm           = None,           # 아직 안 쓰는 경우 None
-        train_loader  = train_loader,
-        val_loader    = val_loader,
-        optimizer     = optim,
-        device        = device,
-        cfg           = cfg,
-        epochs        = 2, # Increase epochs for real dataset
-        eval_steps    = 200,
-        checkpoint_dir= "./ckpt",
-        use_wandb     = True           
-    )
-
-    trainer.train()
+    pass
