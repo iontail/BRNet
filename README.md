@@ -49,5 +49,5 @@ pip install -r requirements.txt
 
 We thank [DAI-Net.Pytorch](https://github.com/ZPDu/DAI-Net.git), [DSFD.pytorch](https://github.com/yxlijun/DSFD.pytorch), [RetinexNet_PyTorch](https://github.com/aasharma90/RetinexNet_PyTorch) for their amazing works!
 
-We referenced the pytorch implementation of [DAI-Net](https://github.com/ZPDu/DAI-Net.git)! 
+We mainly referenced the pytorch implementation of [DAI-Net](https://github.com/ZPDu/DAI-Net.git)! 
 
