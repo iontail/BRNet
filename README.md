@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center"> Darkness Adaptive Activation: Zero-Shot Domain Adaptation between Low-light and Well-Lit Conditions
+  <h1 align="center"> Darkness Adaptive Activation: Object Detection with Zero-Shot Domain Adaptation
 </h1>
   <p align="center">
     <a>Chanhee Lee</a>
