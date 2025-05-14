@@ -2,9 +2,9 @@
   <h1 align="center"> Darkness Adaptive Activation: Zero-Shot Domain Adaptation between Low-light and Well-Lit Conditions
 </h1>
   <p align="center">
-    <a>Byungho Ko</a>
-    ·
     <a>Chanhee Lee</a>
+    ·
+    <a>Byungho Ko</a>
     ·
     <a>Yeonhoo Jung</a>
     ·
