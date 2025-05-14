@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">Boosting Object Detection with Zero-Shot Day-Night Domain Adaptation
+  <h1 align="center"> Adaptive Module Activation: Zero-Shot Domain Adaptation between Low-light and Well-Lit Conditions
 </h1>
   <p align="center">
     <a>Byungho Ko</a>
