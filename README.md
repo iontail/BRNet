@@ -18,6 +18,9 @@ Sungkyunkwan University Applied Arificial Intelligence
 
 ![overview](./assets/BRNet.png)
 
+## 🔨 The code is not completed! 
+### The instructions below are just toy ones.
+
 ## :wrench: Installation
 
 Begin by cloning the repository and setting up the environment:
