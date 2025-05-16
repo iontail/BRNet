@@ -152,6 +152,7 @@ class BR_Trainer:
 
             loss = loss_l_pal1 + loss_c_pal1 + loss_l_pal2 + loss_c_pal2 + loss_enhance2 + loss_enhance \
                 + loss_darklevel + loss_mutual + loss_sotr
+        
             
             
             t1 = time.time()
@@ -172,7 +173,10 @@ class BR_Trainer:
         return loss, losses, training_time
 
 
-    def train_epoch(self, epoch):
+    def train_epoch(self, epoch,    epoch_bar = None):
+        if isinstance(self.train_loader.sampler, torch.utils.data.distributed.DistributedSampler):
+            self.train_loader.sampler.set_epoch(epoch)
+
         self.model.train()
         total_loss= 0.0
         eval_loss = 0.0
@@ -227,7 +231,7 @@ class BR_Trainer:
 
 
             # WandB 로깅 (10 iter마다)
-            if self.use_wandb and (batch_idx % 10 == 0 and batch_idx != 0):
+            if self.use_wandb and (batch_idx % 10 == 0 and batch_idx != 0) and self.args.local_rank == 0:
                 wandb.log({
                     "train/loss_l_pal1": total_loss_l_pal1/batch_num,
                     "train/loss_c_pal1": total_loss_c_pal1/batch_num,
@@ -246,15 +250,18 @@ class BR_Trainer:
             if batch_idx + 1 == len(self.train_loader):
                 eval_loss = self.evaluate()
 
-            self.epoch_bar.set_postfix({
-                "Train_Loss" : f"{total_loss/((batch_idx +1) * self.args.batch_size):.6f}", # self.args.batch_size 사용
-                "Eval_Loss" : f"{eval_loss/len(self.val_loader):.6f}",
-                "Epoch": epoch,
-                "Iteration": self.iteration,
-                "LR": f"{self.optim.param_groups[0]['lr']:.6f}",
-                })
+                
+
+            if epoch_bar is not None:
+                epoch_bar.set_postfix({
+                    "Train_Loss" : f"{total_loss/((batch_idx +1) * self.args.batch_size):.6f}", # self.args.batch_size 사용
+                    "Eval_Loss" : f"{eval_loss/len(self.val_loader):.6f}",
+                    "Epoch": epoch,
+                    "Iteration": self.iteration,
+                    "LR": f"{self.optim.param_groups[0]['lr']:.6f}",
+                    })
             
-            self.epoch_bar.update(1)
+                epoch_bar.update(1)
 
         
 
@@ -297,7 +304,7 @@ class BR_Trainer:
 
                 
 
-        if self.use_wandb:
+        if self.use_wandb and self.args.local_rank == 0:
             wandb.log({
                 "val/loss_l_pal1": total_val_loss_l_pal1 / cnt,
                 "val/loss_c_pal1": total_val_loss_c_pal1 / cnt,
@@ -333,12 +340,15 @@ class BR_Trainer:
         else:
             self.model.to(self.device)
 
-    def train(self):
-        self.net_enh.eval()
+    def get_core_model(self):
+        if isinstance(self.model, (nn.DataParallel, nn.parallel.DistributedDataParallel)):
+            return self.model.module
+        return self.model
 
+    def train(self):
         self.epoch_bar = tqdm(total=self.epochs, desc="Training Progress")
         for epoch in self.epoch_bar:
-            avg_loss = self.train_epoch(epoch)
+            avg_loss = self.train_epoch(epoch, self.epoch_bar)
 
             
             if (epoch + 1) % 5 == 0:
@@ -350,8 +360,8 @@ class BR_Trainer:
 
         # 학습 완료 후 최종 모델 저장 시에도 CPU로 옮겨서 저장
         if self.args.local_rank == 0: # 메인 프로세스에서만 저장
-            final_model_state_dict = self.model.module.to('cpu').state_dict() if isinstance(self.model, nn.DataParallel) or isinstance(self.model, nn.parallel.DistributedDataParallel) \
-                else self.model.to('cpu').state_dict()
+
+            final_model_state_dict = self.get_core_model().to('cpu').state_dict()
             torch.save(final_model_state_dict, os.path.join(self.checkpoint_dir, f"{self.cfg.MODEL_NAME}_final.pt"))
             if isinstance(self.model, nn.DataParallel) or isinstance(self.model, nn.parallel.DistributedDataParallel):
                 self.model.module.to(self.device)

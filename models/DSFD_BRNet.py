@@ -16,7 +16,7 @@ from layers.PhotoReceptor_module import GainBlock, ReflectiveFeedback # Import f
 
 
 
-class DSFD(nn.Module):
+class DSFD_BRNet(nn.Module):
     """Single Shot Multibox Architecture
     The network is composed of a base VGG network followed by the
     added multibox conv layers.  Each multibox layer branches into
@@ -35,7 +35,7 @@ class DSFD(nn.Module):
     """
 
     def __init__(self, phase, base, extras, fem, head1, head2, num_classes, cfg):
-        super(DSFD, self).__init__()
+        super(DSFD_BRNet, self).__init__()
         self.phase = phase
         self.num_classes = num_classes
         self.brnet = base
