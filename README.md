@@ -65,7 +65,7 @@ Organize the folders as:
 
 ## Acknowledgement
 
-We thank [DAI-Net.Pytorch](https://github.com/ZPDu/DAI-Net.git), [DSFD.pytorch](https://github.com/yxlijun/DSFD.pytorch), [RetinexNet_PyTorch](https://github.com/aasharma90/RetinexNet_PyTorch) for their amazing works!
+We thank [DAI-Net.Pytorch](https://github.com/ZPDu/DAI-Net.git), [DSFD.pytorch](https://github.com/yxlijun/DSFD.pytorch), [RetinexNet.PyTorch](https://github.com/aasharma90/RetinexNet_PyTorch), [InterImage.Pytorch](https://github.com/OpenGVLab/InternImage/tree/master/detection/ops_dcnv3) for their amazing works!
 
 We mainly referenced the pytorch implementation of [DAI-Net](https://github.com/ZPDu/DAI-Net.git)! 
 
