@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from layers.DCNv3 import DCNv3
+from layers.ops_dcnv3 import modules as opsm
 
 str_to_act = {'relu': nn.ReLU(), 'gelu': nn.GELU()} # add the activation what you want to use
 str_to_norm = {'bn': nn.BatchNorm2d, 'ln': nn.LayerNorm}
@@ -83,18 +83,25 @@ class Rod_Block(nn.Module):
         self.downsample = downsample
         self.cfg = cfg
 
-        self.bn1 = str_to_norm[normalize](out_dim)
+        self.bn1 = str_to_norm[normalize](in_dim)
         self.bn2 = str_to_norm[normalize](out_dim)
 
 
         self.gain = GainBlock(in_dim, in_dim, activation = self.activation)
         self.tapetum = ReflectiveFeedback(in_dim, activation = self.activation) # problems: mid_dim??
-        self.dcn = DCNv3(in_dim, in_dim, kernel_size = 3, padding = 1, stride = 1)
+
+
+        """
+        We use the DCNv3 of InterImage by simply importing the ops_dcnv3 file
+        Original code url:
+            https://github.com/OpenGVLab/InternImage/blob/master/detection/mmdet_custom/models/backbones/intern_image.py#L377
+
+        See https://arxiv.org/abs/2211.05778 for more details
+        """
+        self.dcn = opsm.DCNv3_pytorch(in_dim, kernel_size = 3, pad = 1, stride = 1)
         self.conv = nn.Conv2d(in_dim, out_dim, kernel_size = 1, padding = 0) 
 
-        
         self.layers = nn.Sequential(
-            self.dcn,
             self.bn1,
             str_to_act[self.activation],
             self.conv,
@@ -113,6 +120,19 @@ class Rod_Block(nn.Module):
 
         if self.cfg.ABLATION.USE_TAPETUM and reflectance is not None:
             x = self.tapetum(x, reflectance)
+
+        # Permute to channels_last for DCNv3_pytorch
+        x_permuted = x.permute(0, 2, 3, 1) # (N, C, H, W) -> (N, H, W, C)
+
+        # Apply DCNv3
+        dcn_out = self.dcn(x_permuted) # Output is (N, H, W, C)
+
+        # Permute back to channels_first for subsequent layers
+        dcn_out = dcn_out.permute(0, 3, 1, 2) # (N, H, W, C) -> (N, C, H, W)
+
+        # Apply the rest of the layers (BN -> Act -> Conv -> BN -> Act)
+        out = self.layers(dcn_out)
+        return out
 
         
         out = self.layers(x)
@@ -256,9 +276,21 @@ if __name__ == '__main__':
     device = torch.device('cpu')
     batch = 2
     res = 512
-    detector = Photoreceptor_Block(3, 10, normalize = 'bn', activation = 'relu', downsample = False, down = 1).to(device)
+
+    from easydict import EasyDict
+    cfg = EasyDict()
+    cfg.ABLATION = EasyDict()
+    cfg.ABLATION.DARKLEVEL = True 
+    cfg.ABLATION.REFLECTANCE = True
+    cfg.ABLATION.ILLUMINATION = True
+
+    cfg.ABLATION.SOTR = True
+    cfg.ABLATION.USE_GAIN = True
+    cfg.ABLATION.USE_TAPETUM = True
+
+    detector = Photoreceptor_Block(4, 10, normalize = 'bn', activation = 'relu', downsample = False, down = 1, cfg = cfg).to(device)
     
-    img = torch.randn(batch, 3, res, res).to(device)
+    img = torch.randn(batch, 4, res, res).to(device)
     darkness_level = torch.randn(batch, 1, 1, 1).to(device)
     
     detector.eval()

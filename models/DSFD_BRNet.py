@@ -454,7 +454,7 @@ def build_net_DSFD(phase, num_classes=2):
     head1 = multibox(extras, num_classes)
     head2 = multibox(extras, num_classes)
     fem = fem_module(fem_cfg)
-    return DSFD(phase, base, extras, fem, head1, head2, num_classes, cfg = cfg)
+    return DSFD_BRNet(phase, base, extras, fem, head1, head2, num_classes, cfg = cfg)
 
 if __name__ == '__main__':
     import torch

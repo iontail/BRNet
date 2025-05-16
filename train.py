@@ -108,6 +108,7 @@ val_dataset = WIDERDetection(cfg.FACE.VAL_FILE, mode='val')
 train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
 train_loader = data.DataLoader(train_dataset, args.batch_size,
                                num_workers=args.num_workers,
+                               shuffle = False,
                                collate_fn=detection_collate,
                                sampler=train_sampler,
                                pin_memory=True)
@@ -115,6 +116,7 @@ val_batchsize = args.batch_size
 val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
 val_loader = data.DataLoader(val_dataset, val_batchsize,
                              num_workers=0,
+                             shuffle = False,
                              collate_fn=detection_collate,
                              sampler=val_sampler,
                              pin_memory=True)
