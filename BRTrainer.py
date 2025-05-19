@@ -172,13 +172,20 @@ class BR_Trainer:
                 g_dark  = self.grads.get('dark_grad', None)
 
                 if g_light is not None and g_dark is not None:
+
+
                     g_light_flat = g_light.view(g_light.size(0), -1)
                     g_dark_flat  = g_dark.view(g_dark.size(0), -1)
 
+                    sort_idx = g_light_flat.size(1) // self.cfg.WEIGHT.SORT_RATIO
+
+                    g_light_flat_part = g_light_flat[:, :sort_idx]
+                    g_dark_flat_part = g_dark_flat[:, :sort_idx]
+
                     # ORT loss from "https://github.com/cuiziteng/ICCV_MAET.git" of https://arxiv.org/abs/2205.03346
-                    loss_sort = self.cfg.WEIGHT.SORT * torch.mean(torch.abs(self.ort_func(g_light_flat, g_dark_flat)))\
-                        + self.cfg.WEIGHT.SORT_M*torch.mean(1 - torch.abs(self.ort_func(g_light_flat, g_light_flat)))\
-                        + self.cfg.WEIGHT.SORT_M*torch.mean(1 - torch.abs(self.ort_func(g_dark_flat, g_dark_flat)))
+                    loss_sort = self.cfg.WEIGHT.SORT * torch.mean(torch.abs(self.ort_func(g_light_flat_part, g_dark_flat_part)))\
+                        + self.cfg.WEIGHT.SORT_M*torch.mean(1 - torch.abs(self.ort_func(g_light_flat_part, g_light_flat_part)))\
+                        + self.cfg.WEIGHT.SORT_M*torch.mean(1 - torch.abs(self.ort_func(g_dark_flat_part, g_dark_flat_part)))
 
 
                 else:

@@ -61,8 +61,7 @@ class DSFD_BRNet(nn.Module):
         self.loc_pal2 = nn.ModuleList(head2[0])
         self.conf_pal2 = nn.ModuleList(head2[1])
 
-        # define for our new semi-orthogonal regularity loss
-        self.ort_func = nn.CosineSimilarity(dim=1, eps=1e-8)
+        
 
         ##############################
         # self.ref를 두 개로 나눠서 1024로 projection 시키고 semi-orthogonal loss 주기 위해서 loss 계산
@@ -213,7 +212,7 @@ class DSFD_BRNet(nn.Module):
 
 
     # during training, the model takes the paired images, and their pseudo GT illumination maps from the Retinex Decom Net
-    def forward(self, x, x_light, I, I_light):
+    def forward(self, x, x_light, I, I_light, hook_dict = None):
         size = x.size()[2:]
         pal1_sources = list()
         pal2_sources = list()
@@ -223,12 +222,12 @@ class DSFD_BRNet(nn.Module):
         conf_pal2 = list()
 
         # 밝은 이미지 통과
-        features_light, darklevel_light, R_light, _ = self.brnet(x_light, only_disentangle = False) # 모든 레이어 통과
+        features_light, darklevel_light, R_light, _ = self.brnet(x_light, only_disentangle = True, hook_dict = hook_dict) 
         x_light = features_light[0]
 
         # 어두운 이미지 통과
-        features_dark, darklevel_dark, R_dark, _ = self.brnet(x, only_disentangle = True)
-        x_dark = features_dark[0] 
+        features_dark, darklevel_dark, R_dark, _ = self.brnet(x, only_disentangle = False, hook_dict = hook_dict) # 모든 레이어 통과
+        x_dark = features_dark[0]
     
 
         # Interchange for "Redecomposition"
@@ -277,16 +276,7 @@ class DSFD_BRNet(nn.Module):
 
         conv7 = F.relu(self.fpn_topdown[0](of6), inplace=True)
 
-        # --------------------------------
-        # Semi Orthogonal Regularity Loss (미완성)
-        # --------------------------------
-        # SOTR loss from "https://github.com/cuiziteng/ICCV_MAET.git" of https://arxiv.org/abs/2205.03346
-        loss_sotr = 0
-        """
-        loss_sotr = self.config.WEIGHT.SOTR * torch.mean(torch.abs(self.ort_func (grads['light_grad'].view(batch_size,-1), grads['dark_grad'].view(batch_size,-1))))+\
-                            0.5*torch.mean(1 - torch.abs(self.ort_func(grads['light_grad'].view(batch_size,-1), grads['light_grad'].view(batch_size,-1)))) +\
-                            0.5*torch.mean(1 - torch.abs(self.ort_func(grads['dark_grad'].view(batch_size,-1), grads['dark_grad'].view(batch_size,-1))))
-        """
+
 
         x = F.relu(self.fpn_topdown[1](conv7), inplace=True)
         conv6 = F.relu(self._upsample_prod(
