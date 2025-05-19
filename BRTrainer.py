@@ -46,7 +46,7 @@ class BR_Trainer:
                  eval_steps=500,
                  checkpoint_dir="./ckpt",
                  use_wandb=True,
-                 project_name="Bio_Reflect_Net"
+                 project_name="BRNet"
                  ):
         
         self.cfg = cfg
@@ -125,7 +125,10 @@ class BR_Trainer:
                 # computing dark-level labeling
                 # Compute_Darklevel은 (C,H,W) 텐서를 받아 스칼라 텐서를 반환해야 함
 
-                dl_dark_gt_list.append(Compute_Darklevel(img_dark[i].cpu()).to(self.device)) # CPU에서 계산 후 GPU로
+                # img_dark[i]는 0-1 범위이므로, Compute_Darklevel이 0-255 범위로 스케일링
+                dl_dark_gt_list.append(Compute_Darklevel((img_dark[i] * 255.0).cpu()).to(self.device)) # CPU에서 계산 후 GPU로
+
+                # 정상이미지는 WiderFace 데이터셋에서 계산한 darklevel을 사용
                 dl_light_gt_list.append(darklevels[i].to(self.device) if isinstance(darklevels, list) else darklevels[i:i+1].to(self.device)) # 데이터로더 출력에 따라 수정
            
             self.iteration += 1
@@ -168,6 +171,7 @@ class BR_Trainer:
             if not self.cfg.ABLATION.SORT:
                 loss_sort = torch.tensor(0.0).to(self.device)
             else:
+                # hooking한 gradient 가져오기
                 g_light = self.grads.get('light_grad', None)
                 g_dark  = self.grads.get('dark_grad', None)
 

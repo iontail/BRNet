@@ -357,7 +357,7 @@ class DSFD_BRNet(nn.Module):
                 self.priors_pal2)
 
         # packing the outputs from the reflectance decoder:
-        return output, [R_dark, R_light, R_dark_2, R_light_2], [darklevel_dark, darklevel_light], loss_mutual, loss_sotr
+        return output, [R_dark, R_light, R_dark_2, R_light_2], [darklevel_dark, darklevel_light], loss_mutual
 
     def load_weights(self, base_file):
         other, ext = os.path.splitext(base_file)
@@ -366,13 +366,19 @@ class DSFD_BRNet(nn.Module):
             mdata = torch.load(base_file,
                                map_location=lambda storage, loc: storage)
 
-            epoch = 50
-            self.load_state_dict(mdata)
+            # Check if mdata is a checkpoint dictionary or just a state_dict
+            if 'model' in mdata and 'epoch' in mdata:
+                self.load_state_dict(mdata['model'])
+                epoch = mdata['epoch']
+                print(f'Resumed model from epoch {epoch}.')
+            else: # Assuming mdata is just the model's state_dict
+                self.load_state_dict(mdata)
+                epoch = 0 
+                print('Loaded model state_dict. Epoch not found in checkpoint, starting from 0 or pre-set.')
             print('Finished!')
         else:
             print('Sorry only .pth and .pkl files supported.')
         return epoch
-
     def xavier(self, param):
         nn.init.xavier_uniform(param)
 
@@ -562,7 +568,7 @@ if __name__ == '__main__':
     try:
         # train 모드에서는 forward 메서드에 4개의 입력이 필요함
         # 입력 텐서도 동일한 장치로 이동
-        outputs, reflectances, darklevels, loss_mutual, loss_sotr = train_model(
+        outputs, reflectances, darklevels, loss_mutual = train_model(
             dummy_input.to(device), dummy_input_light.to(device),
             dummy_I.to(device), dummy_I_light.to(device)
         )
@@ -598,7 +604,6 @@ if __name__ == '__main__':
                     print(f"    darklevels[{i}]: {type(item)}")
                     
         print(f"loss_mutual 값: {loss_mutual}")
-        print(f"loss_sotr 값: {loss_sotr}")
         
     except Exception as e:
         print(f"forward 실행 중 오류 발생: {e}")

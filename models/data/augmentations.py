@@ -1034,7 +1034,7 @@ def anchor_crop_image_sampling2(img,
         return image, dark_image, sampled_labels
 
 # newly defined function
-def Compute_Darklevel(img, a=0.06, b=110, scale=0.9):
+def Compute_Darklevel(img, a=0.07, b=107, scale=0.9):
     
     if isinstance(img, torch.Tensor):
         img_np = img.cpu().numpy()
@@ -1132,7 +1132,7 @@ def preprocess(img, bbox_labels, mode, image_path):
     #img = Image.fromarray(img)
     img = to_chw_bgr(img)
     img = img.astype('float32')
-    img -= cfg.img_mean
+    #img -= cfg.img_mean
     img = img[[2, 1, 0], :, :]  # to RGB
     #img = img * cfg.scale
 
@@ -1140,6 +1140,7 @@ def preprocess(img, bbox_labels, mode, image_path):
 
 
     darklevel = Compute_Darklevel(img, a = cfg.DARKLEVEL.A, b = cfg.DARKLEVEL.B, scale = cfg.DARKLEVEL.SCALE)
+    img -= cfg.img_mean
 
     return img, sampled_labels, darklevel
 
@@ -1235,8 +1236,8 @@ def preprocess2(img, dark_img, bbox_labels, mode):
     dark_img = to_chw_bgr(dark_img)
     img = img.astype('float32')
     dark_img = dark_img.astype('float32')
-    img -= cfg.img_mean
-    dark_img -= cfg.img_mean
+    #img -= cfg.img_mean
+    #dark_img -= cfg.img_mean
     img = img[[2, 1, 0], :, :]  # to RGB
     dark_img = dark_img[[2, 1, 0], :, :]
     #img = img * cfg.scale

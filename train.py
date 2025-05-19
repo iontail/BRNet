@@ -128,7 +128,7 @@ if args.use_wandb and local_rank == 0: # avoid overlap logging
     wandb.init(project = cfg.MODEL_NAME)
     wandb.config = {
         'learning_rate': args.lr,
-        'epooch': cfg.EPOCHES,
+        'epoch': cfg.EPOCHES,
         'batch_size': args.batch_size
     }
 
@@ -146,6 +146,7 @@ def train():
     net = build_net("train", cfg.NUM_CLASSES)
     net_enh = RetinexNet()
     net_enh.load_state_dict(torch.load(args.save_folder + 'decomp.pth'))
+    optimizer_state_dict = None
 
     if args.resume:
         # simply print 0th gpu resume
@@ -202,6 +203,7 @@ def train():
     optimizer = optim.Adamw(param_group, lr=lr, momentum=args.momentum,
                           weight_decay=args.weight_decay)
 
+
     if args.cuda:
         if args.multigpu:
             net = net.to(device)
@@ -211,11 +213,11 @@ def train():
             net_enh = torch.nn.parallel.DistributedDataParallel(net_enh, device_ids=[local_rank])
 
         
-        random.seed(cfg.SEED)
-        np.random.seed(cfg.SEED)
-        torch.manual_seed(cfg.SEED)
-        torch.cuda.manual_seed(cfg.SEED)
-        cudnn.benchmark = False
+    random.seed(cfg.SEED)
+    np.random.seed(cfg.SEED)
+    torch.manual_seed(cfg.SEED)
+    torch.cuda.manual_seed(cfg.SEED)
+    cudnn.benchmark = False
         
 
     
