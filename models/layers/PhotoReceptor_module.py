@@ -127,7 +127,9 @@ class Rod_Block(nn.Module):
         # Apply DCNv3
         dcn_out = self.dcn(x_permuted) # Output is (N, H, W, C)
 
+
         # Permute back to channels_first for subsequent layers
+        dcn_out = dcn_out + x_permuted # residual connection
         dcn_out = dcn_out.permute(0, 3, 1, 2) # (N, H, W, C) -> (N, C, H, W)
 
         # Apply the rest of the layers (BN -> Act -> Conv -> BN -> Act)

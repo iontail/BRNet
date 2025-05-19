@@ -92,6 +92,8 @@ _C.WEIGHT.SMOOTH = 0.5
 _C.WEIGHT.RC = 0.001
 _C.WEIGHT.MC = 0.1
 _C.WEIGHT.DL = 0.05
+_C.WEIGHT.SORT = 5
+_C.WEIGHT.SORT_M = 0.5
 
 # face config
 _C.FACE = EasyDict()

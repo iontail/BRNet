@@ -79,19 +79,38 @@ class BR_Trainer:
         self.criterion_enhance = EnhanceLoss()
         self.criterion_dark = nn.MSELoss()
 
+        # define for our new semi-orthogonal regularity loss
+        self.ort_func = nn.CosineSimilarity(dim=1, eps=1e-8)
+
+        self.grads = {}
+
+    # define for gradient saving, (for S-ORT loss)
+    def save_grad(self, name):
+        def hook(grad):
+            self.grads[name] = grad.detach()
+        return hook
+
         
 
 
-    def compute_losses(self, batch):
+    def compute_losses(self, batch, mode = "train"):
         """
         return losses, time
         """
+
+
 
         with autocast('cuda', dtype=torch.bfloat16 if self.cfg.BF16 else torch.float32):
             images, targets, darklevels, img_paths = batch
             images = images.to(self.device) / 255.
             detection_targets = [ann.to(self.device) for ann in targets] # 변수명 명확화
             img_dark = torch.empty_like(images).to(self.device) 
+
+            hook_dict = {
+                'dark': self.save_grad('dark_grad'),
+                'light': self.save_grad('light_grad'),
+                }
+
 
             # Compute_Darklevel 함수는 (C,H,W) 형태의 단일 이미지를 입력으로 받음
             # DataLoader에서 오는 darklevels의 형태와 Compute_Darklevel의 사용 일관성 확인 필요
@@ -126,7 +145,7 @@ class BR_Trainer:
             R_light_gt, I_light = self.net_enh(images)
 
             # self.model (DSFD_BRNet 인스턴스) 호출
-            out, out2, out3, loss_mutual, loss_sotr = self.model(img_dark, images, I_dark.detach(), I_light.detach())
+            out, out2, out3, loss_mutual = self.model(img_dark, images, I_dark.detach(), I_light.detach(), hook_dict = hook_dict) # out2는 R_dark, R_light, R_dark_2, R_light_2
             R_dark, R_light, R_dark_2, R_light_2 = out2
             dl_dark, dl_light = out3
             
@@ -146,12 +165,28 @@ class BR_Trainer:
             loss_darklevel_light = self.criterion_dark(dl_light, dl_light_gt) # dl_light_gt 사용
             loss_darklevel = (loss_darklevel_dark + loss_darklevel_light ) * self.cfg.WEIGHT.DL
 
-            if not self.cfg.ABLATION.SOTR: # not using S-OTR loss
-                loss_sotr = 0
+            if not self.cfg.ABLATION.SORT:
+                loss_sort = torch.tensor(0.0).to(self.device)
+            else:
+                g_light = self.grads.get('light_grad', None)
+                g_dark  = self.grads.get('dark_grad', None)
 
+                if g_light is not None and g_dark is not None:
+                    g_light_flat = g_light.view(g_light.size(0), -1)
+                    g_dark_flat  = g_dark.view(g_dark.size(0), -1)
+
+                    # ORT loss from "https://github.com/cuiziteng/ICCV_MAET.git" of https://arxiv.org/abs/2205.03346
+                    loss_sort = self.cfg.WEIGHT.SORT * torch.mean(torch.abs(self.ort_func(g_light_flat, g_dark_flat)))\
+                        + self.cfg.WEIGHT.SORT_M*torch.mean(1 - torch.abs(self.ort_func(g_light_flat, g_light_flat)))\
+                        + self.cfg.WEIGHT.SORT_M*torch.mean(1 - torch.abs(self.ort_func(g_dark_flat, g_dark_flat)))
+
+
+                else:
+                    loss_sort = torch.tensor(0.0).to(self.device)
+                
 
             loss = loss_l_pal1 + loss_c_pal1 + loss_l_pal2 + loss_c_pal2 + loss_enhance2 + loss_enhance \
-                + loss_darklevel + loss_mutual + loss_sotr
+                + loss_darklevel + loss_mutual + loss_sort
         
             
             
@@ -166,7 +201,7 @@ class BR_Trainer:
                 "loss_enhance2": loss_enhance2.item(),
                 "loss_darklevel": loss_darklevel.item(),
                 "loss_mutual": loss_mutual.item(),
-                "loss_sotr": loss_sotr.item(),
+                "loss_sort": loss_sort.item(),
                 "total_loss": loss.item() # 키 이름 변경하여 명확성 확보
             }
 
@@ -189,7 +224,7 @@ class BR_Trainer:
         total_loss_enhance2 = 0.0
         total_loss_darklevel = 0.0
         total_loss_mutual = 0.0
-        total_loss_sotr = 0.0
+        total_loss_sort = 0.0
 
         for batch_idx, batch in enumerate(self.train_loader):
 
@@ -197,7 +232,7 @@ class BR_Trainer:
                 return False
             
             # self.model.train() # 에폭 시작 시 한 번만 호출
-            model_loss, losses, _ = self.compute_losses(batch)
+            model_loss, losses, _ = self.compute_losses(batch, mode = 'train')
 
             if model_loss is None: # MAX_STEPS 도달 시
                 return False
@@ -224,7 +259,7 @@ class BR_Trainer:
             total_loss_enhance2 += losses['loss_enhance2']
             total_loss_darklevel += losses['loss_darklevel']
             total_loss_mutual += losses['loss_mutual']
-            total_loss_sotr += losses['loss_sotr']
+            total_loss_sort += losses['loss_sort']
 
             batch_num = batch_idx + 1
 
@@ -241,7 +276,7 @@ class BR_Trainer:
                     "train/loss_enhance2": total_loss_enhance2/batch_num,
                     "train/loss_darklevel": total_loss_darklevel/batch_num,
                     "train/loss_mutual": total_loss_mutual/batch_num,
-                    "train/loss_sotr": total_loss_sotr/batch_num,
+                    "train/loss_sort": total_loss_sort/batch_num,
                     "epoch": epoch,
                     "step": epoch * len(self.train_loader) + batch_num
                 })
@@ -279,13 +314,13 @@ class BR_Trainer:
         total_val_loss_enhance2 = 0.0
         total_val_loss_darklevel = 0.0
         total_val_loss_mutual = 0.0
-        total_val_loss_sotr = 0.0
+        total_val_loss_sort = 0.0
 
         with torch.no_grad():
             cnt = 0 
 
             for batch in self.val_loader:
-                model_loss, losses_dict, _ = self.compute_losses(batch)
+                model_loss, losses_dict, _ = self.compute_losses(batch, mode = 'val')
                 if model_loss is None: # MAX_STEPS 도달 시 (평가 중에는 발생하지 않아야 하지만 안전장치)
                     continue
 
@@ -300,7 +335,7 @@ class BR_Trainer:
                 total_val_loss_enhance2 += losses_dict['loss_enhance2']
                 total_val_loss_darklevel += losses_dict['loss_darklevel']
                 total_val_loss_mutual += losses_dict['loss_mutual']
-                total_val_loss_sotr += losses_dict['loss_sotr']
+                total_val_loss_sort += losses_dict['loss_sort']
 
                 
 
@@ -314,7 +349,7 @@ class BR_Trainer:
                 "val/loss_enhance2": total_val_loss_enhance2 / cnt,
                 "val/loss_darklevel": total_val_loss_darklevel / cnt,
                 "val/loss_mutual": total_val_loss_mutual / cnt,
-                "val/loss_sotr": total_val_loss_sotr / cnt,
+                "val/loss_sort": total_val_loss_sort / cnt,
                 "val/total_loss": total_val_loss / cnt
             })
 
