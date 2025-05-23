@@ -1,15 +1,16 @@
 <p align="center">
-  <h1 align="center"> Darkness Adaptive Activation: Object Detection with Zero-Shot Domain Adaptation
-</h1>
+  <h1 align="center">Darkness Adaptive Activation: Object Detection with Zero-Shot Domain Adaptation</h1>
   <p align="center">
-    <a>Chanhee Lee</a>
+    <a>Chanhee Lee<sup>1</sup></a>
     ·
-    <a>Byungho Ko</a>
+    <a>Byungho Ko<sup>2</sup></a>
     ·
-    <a>Yeonhoo Jung</a>
+    <a>Yeonhoo Jung<sup>2</sup></a>
     ·
-    <a>Jinwoong Jung</a>
+    <a>Jinwoong Jung<sup>2</sup></a>
   </p>
+</p>
+
 
 ## :sparkles: Bio-Receptor Network (BRNet)
 Sungkyunkwan University Applied Arificial Intelligence
