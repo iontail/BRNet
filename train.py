@@ -40,7 +40,7 @@ parser.add_argument('--resume',
                     default=None, type=str,
                     help='Checkpoint state_dict file to resume training from')
 parser.add_argument('--num_workers',
-                    default=0, type=int,
+                    default=4, type=int,
                     help='Number of workers used in dataloading')
 parser.add_argument('--cuda',
                     default=torch.cuda.is_available(), type=bool,
