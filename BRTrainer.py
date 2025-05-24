@@ -103,7 +103,7 @@ class BR_Trainer:
         with autocast('cuda', dtype=torch.bfloat16 if self.cfg.BF16 else torch.float32):
             images, targets, darklevels, img_paths = batch
             images = images.to(self.device) / 255.
-            detection_targets = [ann.to(self.device) for ann in targets] # 변수명 명확화
+            detection_targets = [cls.to(self.device) for cls in targets] # 변수명 명확화
             img_dark = torch.empty_like(images).to(self.device) 
 
             hook_dict = {
@@ -126,15 +126,15 @@ class BR_Trainer:
                 # Compute_Darklevel은 (C,H,W) 텐서를 받아 스칼라 텐서를 반환해야 함
 
                 # img_dark[i]는 0-1 범위이므로, Compute_Darklevel이 0-255 범위로 스케일링
-                dl_dark_gt_list.append(Compute_Darklevel((img_dark[i] * 255.0).cpu()).to(self.device)) # CPU에서 계산 후 GPU로
+                dl_dark_gt_list.append(Compute_Darklevel((img_dark[i].detach() * 255.0).cpu()).to(self.device)) # CPU에서 계산 후 GPU로
 
                 # 정상이미지는 WiderFace 데이터셋에서 계산한 darklevel을 사용
-                dl_light_gt_list.append(darklevels[i].to(self.device) if isinstance(darklevels, list) else darklevels[i:i+1].to(self.device)) # 데이터로더 출력에 따라 수정
+                dl_light_gt_list.append(darklevels[i].to(self.device) if isinstance(darklevels, list) else darklevels[i:i+1].to(self.device))
            
             self.iteration += 1
             if self.iteration in self.cfg.LR_STEPS:
                 self.step_index += 1
-                adjust_learning_rate(self.optim, self.args.gamma, self.step_index) # self.optim 사용
+                adjust_learning_rate(self.optim, self.args.gamma, self.step_index)
 
             if self.iteration >= self.cfg.MAX_STEPS:
                 # MAX_STEPS 도달 시 None 반환하여 train_epoch에서 처리하도록 함
@@ -164,8 +164,8 @@ class BR_Trainer:
                         1. - ssim(R_dark, R_dark_gt.detach())) + (1. - ssim(R_light, R_light_gt.detach()))
             
             # darklevel loss
-            loss_darklevel_dark = self.criterion_dark(dl_dark, dl_dark_gt) # dl_dark_gt 사용
-            loss_darklevel_light = self.criterion_dark(dl_light, dl_light_gt) # dl_light_gt 사용
+            loss_darklevel_dark = self.criterion_dark(dl_dark, dl_dark_gt) 
+            loss_darklevel_light = self.criterion_dark(dl_light, dl_light_gt) 
             loss_darklevel = (loss_darklevel_dark + loss_darklevel_light ) * self.cfg.WEIGHT.DL
 
             if not self.cfg.ABLATION.SORT:
@@ -181,7 +181,7 @@ class BR_Trainer:
                     g_light_flat = g_light.view(g_light.size(0), -1)
                     g_dark_flat  = g_dark.view(g_dark.size(0), -1)
 
-                    sort_idx = g_light_flat.size(1) // self.cfg.WEIGHT.SORT_RATIO
+                    sort_idx = int(g_light_flat.size(1) / self.cfg.WEIGHT.SORT_RATIO)
 
                     g_light_flat_part = g_light_flat[:, :sort_idx]
                     g_dark_flat_part = g_dark_flat[:, :sort_idx]
@@ -393,11 +393,12 @@ class BR_Trainer:
 
     def train(self):
         self.epoch_bar = tqdm(total=self.epochs, desc="Training Progress")
+        best_loss = -torch.inf()  # 초기 최저 손실값 설정
         for epoch in self.epoch_bar:
             avg_loss = self.train_epoch(epoch, self.epoch_bar)
 
             
-            if (epoch + 1) % 5 == 0:
+            if (epoch + 1) % 5 == 0 :
                 self.save_checkpoint(epoch + 1)
 
             if not avg_loss: #train_epoch 메소드가 False를 리턴하면 종료
