@@ -31,7 +31,7 @@ parser = argparse.ArgumentParser(
     description='DSFD face Detector Training With Pytorch')
 
 parser.add_argument('--batch_size',
-                    default=2, type=int,
+                    default=4, type=int,
                     help='Batch size for training')
 parser.add_argument('--model',
                     default='dark', type=str,
