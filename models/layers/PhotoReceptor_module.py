@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from layers.ops_dcnv3 import modules as opsm
+from .ops_dcnv3 import modules as opsm
 
 str_to_act = {'relu': nn.ReLU(), 'gelu': nn.GELU()} # add the activation what you want to use
 str_to_norm = {'bn': nn.BatchNorm2d, 'ln': nn.LayerNorm}

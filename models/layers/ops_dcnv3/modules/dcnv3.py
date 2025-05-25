@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.nn.init import constant_, xavier_uniform_
 
-from layers.ops_dcnv3.functions import DCNv3Function, dcnv3_core_pytorch
+from ..functions import DCNv3Function, dcnv3_core_pytorch
 
 import math
 

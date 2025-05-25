@@ -71,14 +71,14 @@ parser.add_argument('--use_wandb',
                     help='Whether using wandb log')
 
 args = parser.parse_args()
-global local_rank
-local_rank = args.local_rank
 
-if 'LOCAL_RANK' not in os.environ:
-    os.environ['LOCAL_RANK'] = str(args.local_rank)
+if args.local_rank is None:
+    local_rank = 0
+else:
+    local_rank = args.local_rank
 
-local_rank = int(os.environ['LOCAL_RANK'])  # GPU 번호
-device = torch.device(f"cuda:{local_rank}")  # 이걸 기반으로 .to(device)에서 사용
+os.environ['LOCAL_RANK'] = str(local_rank)
+device = torch.device(f"cuda:{local_rank}")
 
 if torch.cuda.is_available():
     if args.cuda:
@@ -105,15 +105,24 @@ train_dataset = WIDERDetection(cfg.FACE.TRAIN_FILE, mode='train')
 val_dataset = WIDERDetection(cfg.FACE.VAL_FILE, mode='val')
 
 # for split the dataset matching the local rank
-train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
+if torch.distributed.is_available() and torch.distributed.is_initialized():
+    train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
+else:
+    train_sampler = None
+
 train_loader = data.DataLoader(train_dataset, args.batch_size,
                                num_workers=args.num_workers,
                                shuffle = False,
                                collate_fn=detection_collate,
                                sampler=train_sampler,
                                pin_memory=True)
+
 val_batchsize = args.batch_size
-val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False)
+if torch.distributed.is_available() and torch.distributed.is_initialized():
+    val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=True)
+else:
+    val_sampler = None
+    
 val_loader = data.DataLoader(val_dataset, val_batchsize,
                              num_workers=0,
                              shuffle = False,
@@ -199,8 +208,8 @@ def train():
     param_group += [{'params': net.brnet.ref.parameters(), 'lr': lr / 10.}]
     param_group += [{'params': net.brnet.dark.parameters(), 'lr': lr / 10.}]
 
-    # change SGD to AdamW
-    optimizer = optim.Adamw(param_group, lr=lr, momentum=args.momentum,
+
+    optimizer = optim.SGD(param_group, lr=lr, momentum=args.momentum,
                           weight_decay=args.weight_decay)
 
 

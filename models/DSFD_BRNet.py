@@ -3,15 +3,15 @@ import torch
 import torch.nn.functional as F
 import torch.nn as nn
 
-from data.config import cfg
+from models.data.config import cfg
 
-from layers.basic_layers import *
-from modules.l2norm import L2Norm
-from layers.DSFD_basic_modules import DistillKL, fem_module, add_extras
-from functions.detection import Detect
-from modules.priorbox import PriorBox
-from BRNet import BRNet
-from layers.PhotoReceptor_module import GainBlock, ReflectiveFeedback # Import for type checking
+from models.layers.basic_layers import *
+from models.modules.l2norm import L2Norm
+from models.layers.DSFD_basic_modules import DistillKL, fem_module, add_extras
+from models.functions.detection import Detect
+from models.modules.priorbox import PriorBox
+from models.BRNet import BRNet
+from models.layers.PhotoReceptor_module import GainBlock, ReflectiveFeedback # Import for type checking
 
 
 

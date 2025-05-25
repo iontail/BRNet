@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchmetrics.functional import structural_similarity_index_measure as ssim
-from data.config import cfg
+from ..data.config import cfg
 
 def gradient(input_tensor, direction):
     smooth_kernel_x = torch.FloatTensor([[0, 0], [-1, 1]]).view((1, 1, 2, 2)).cuda()

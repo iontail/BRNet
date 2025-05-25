@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from modules.bbox_utils import decode, nms
+from ..modules.bbox_utils import decode, nms
 
 
 class Detect(nn.Module):

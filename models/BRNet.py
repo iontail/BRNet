@@ -1,10 +1,10 @@
 import torch
 import torch.nn as nn
 
-from layers.basic_layers import *
-from layers.PhotoReceptor_module import Photoreceptor_Block
-from layers.DSFD_basic_modules import Interpolate
-from data.config import cfg
+from .layers.basic_layers import *
+from .layers.PhotoReceptor_module import Photoreceptor_Block
+from .layers.DSFD_basic_modules import Interpolate
+from .data.config import cfg
 
 class BRNet(nn.Module):
     """
