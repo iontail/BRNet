@@ -16,6 +16,7 @@ import numpy as np
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
 from torchmetrics.functional import structural_similarity_index_measure as ssim
+import torch.distributed as dist
 from tqdm import tqdm
 import wandb
 
@@ -28,9 +29,9 @@ from BRTrainer import BR_Trainer, adjust_learning_rate
 
 parser = argparse.ArgumentParser(
     description='DSFD face Detector Training With Pytorch')
-train_set = parser.add_mutually_exclusive_group()
+
 parser.add_argument('--batch_size',
-                    default=4, type=int,
+                    default=2, type=int,
                     help='Batch size for training')
 parser.add_argument('--model',
                     default='dark', type=str,
@@ -58,7 +59,7 @@ parser.add_argument('--gamma',
                     default=0.1, type=float,
                     help='Gamma update for SGD')
 parser.add_argument('--multigpu',
-                    default=True, type=bool,
+                    default=False, type=bool,
                     help='Use mutil Gpu training')
 parser.add_argument('--save_folder',
                     default='weights/',
@@ -89,6 +90,13 @@ if torch.cuda.is_available():
             print('Using {} gpus'.format(gpu_num))
 
         torch.cuda.set_device(local_rank)  # 여기 핵심! rank가 아닌 local_rank로 GPU 할당
+
+        if args.multigpu and torch.cuda.device_count() > 1:
+            if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+                dist.init_process_group(backend='nccl')  # DDP 초기화
+            else:
+                print("multigpu is set to True, but RANK/WORLD_SIZE is not set. Disabling DDP.")
+                args.multigpu = False
         dist.init_process_group(backend='nccl')  # DDP 초기화
         
     else:
@@ -105,7 +113,7 @@ train_dataset = WIDERDetection(cfg.FACE.TRAIN_FILE, mode='train')
 val_dataset = WIDERDetection(cfg.FACE.VAL_FILE, mode='val')
 
 # for split the dataset matching the local rank
-if torch.distributed.is_available() and torch.distributed.is_initialized():
+if args.multigpu:
     train_sampler = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True)
 else:
     train_sampler = None
@@ -118,7 +126,8 @@ train_loader = data.DataLoader(train_dataset, args.batch_size,
                                pin_memory=True)
 
 val_batchsize = args.batch_size
-if torch.distributed.is_available() and torch.distributed.is_initialized():
+
+if args.multigpu:
     val_sampler = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=True)
 else:
     val_sampler = None
@@ -144,9 +153,10 @@ if args.use_wandb and local_rank == 0: # avoid overlap logging
 def train():
     
     
-    #per_epoch_size = len(train_dataset) // (args.batch_size * torch.cuda.device_count())
-    # sampler사용하기 떄문에 아래로 고쳐야함
-    per_epoch_size = len(train_sampler) // args.batch_size
+    if train_sampler is not None:
+        per_epoch_size = len(train_sampler) // args.batch_size
+    else:
+        per_epoch_size = len(train_dataset) // args.batch_size
 
     start_epoch = 0
     iteration = 0
@@ -196,7 +206,6 @@ def train():
     # 왜냐하면 저자들은 4로 학습했기 때문
     lr = args.lr * np.round(np.sqrt(args.batch_size / 4 * torch.cuda.device_count()),4)
     param_group = []
-    param_group += [{'params': net.brnet.parameters(), 'lr': lr}]
     param_group += [{'params': net.extras.parameters(), 'lr': lr}]
     param_group += [{'params': net.fpn_topdown.parameters(), 'lr': lr}]
     param_group += [{'params': net.fpn_latlayer.parameters(), 'lr': lr}]
@@ -207,19 +216,22 @@ def train():
     param_group += [{'params': net.conf_pal2.parameters(), 'lr': lr}]
     param_group += [{'params': net.brnet.ref.parameters(), 'lr': lr / 10.}]
     param_group += [{'params': net.brnet.dark.parameters(), 'lr': lr / 10.}]
+    param_group += [{'params': net.brnet.layers.parameters(), 'lr': lr}]
 
 
     optimizer = optim.SGD(param_group, lr=lr, momentum=args.momentum,
                           weight_decay=args.weight_decay)
 
 
-    if args.cuda:
-        if args.multigpu:
-            net = net.to(device)
-            net = torch.nn.parallel.DistributedDataParallel(net, device_ids=[local_rank], find_unused_parameters=True)
+    if args.multigpu:
+        net = net.to(device)
+        net = torch.nn.parallel.DistributedDataParallel(net, device_ids=[local_rank], find_unused_parameters=True)
 
-            net_enh = net_enh.to(device)
-            net_enh = torch.nn.parallel.DistributedDataParallel(net_enh, device_ids=[local_rank])
+        net_enh = net_enh.to(device)
+        net_enh = torch.nn.parallel.DistributedDataParallel(net_enh, device_ids=[local_rank])
+    else:
+        net = net.to(device)
+        net_enh = net_enh.to(device)
 
         
     random.seed(cfg.SEED)

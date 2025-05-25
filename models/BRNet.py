@@ -47,7 +47,7 @@ class BRNet(nn.Module):
         self.stage_id = [[7, 8, 9, 10, 11, 12, 13, 14, 15],
                          [16, 17, 18],
                          [19, 20, 21],
-                         [22, 23, 24, 25, 26]] 
+                         [22, 23, 24, 25]] 
         self.cfg = cfg
         
 
@@ -127,9 +127,11 @@ class BRNet(nn.Module):
             if 'light' in hook_dict and only_disentangle:
                 x.register_hook(hook_dict['light'])
 
-
+        
         darklevel = self.dark(x) # (B, 1, H, W)
         darklevel_mean = darklevel.mean(dim = [2, 3], keepdim = True) # (B, 1, 1, 1)
+        #print(f"DarkLevel: {darklevel.shape}")
+        #print(f"DarkLevel_mean: {darklevel_mean.shape}")
 
         ref = self.ref(x) # (B, 3, H, W)
         ref_mean = ref.flatten(start_dim=2).mean(dim=-1) # (B, 3)

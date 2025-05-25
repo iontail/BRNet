@@ -140,8 +140,8 @@ class BR_Trainer:
                 # MAX_STEPS 도달 시 None 반환하여 train_epoch에서 처리하도록 함
                 return None, None, None
 
-            dl_dark_gt = torch.stack(dl_dark_gt_list).unsqueeze(1).unsqueeze(2).unsqueeze(3) # (B, 1, 1, 1) 형태로
-            dl_light_gt = torch.stack(dl_light_gt_list).unsqueeze(1).unsqueeze(2).unsqueeze(3) # (B, 1, 1, 1) 형태로
+            dl_dark_gt = torch.stack(dl_dark_gt_list).view(-1, 1, 1, 1)
+            dl_light_gt = torch.stack(dl_light_gt_list).view(-1, 1, 1, 1)
 
             t0 = time.time()
             R_dark_gt, I_dark = self.net_enh(img_dark)
@@ -219,7 +219,7 @@ class BR_Trainer:
         return loss, losses, training_time
 
 
-    def train_epoch(self, epoch,    epoch_bar = None):
+    def train_epoch(self, epoch):
         if isinstance(self.train_loader.sampler, torch.utils.data.distributed.DistributedSampler):
             self.train_loader.sampler.set_epoch(epoch)
 
@@ -237,7 +237,8 @@ class BR_Trainer:
         total_loss_mutual = 0.0
         total_loss_sort = 0.0
 
-        for batch_idx, batch in enumerate(self.train_loader):
+        epoch_bar = tqdm(self.train_loader, desc="Training Progress")
+        for batch_idx, batch in enumerate(epoch_bar):
 
             if self.iteration >= self.cfg.MAX_STEPS:
                 return False
@@ -392,10 +393,9 @@ class BR_Trainer:
         return self.model
 
     def train(self):
-        self.epoch_bar = tqdm(total=self.epochs, desc="Training Progress")
-        best_loss = -torch.inf()  # 초기 최저 손실값 설정
-        for epoch in self.epoch_bar:
-            avg_loss = self.train_epoch(epoch, self.epoch_bar)
+        best_loss = -torch.inf  # 초기 최저 손실값 설정
+        for epoch in range(self.epochs):
+            avg_loss = self.train_epoch(epoch)
 
             
             if (epoch + 1) % 5 == 0 :

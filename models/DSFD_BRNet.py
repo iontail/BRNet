@@ -107,10 +107,10 @@ class DSFD_BRNet(nn.Module):
                 s = getattr(self, f'L2Normef{i+1}')(feature)
                 pal1_sources.append(s)
             elif i == 3:
-                x = feature  # Save for passing to next layers
                 pal1_sources.append(feature)
 
         # Apply extra layers as in original test_forward
+        x = features[-1]
         for k in range(2):
             x = F.relu(self.extras[k](x), inplace=True)
         of5 = x
@@ -251,19 +251,19 @@ class DSFD_BRNet(nn.Module):
                              self.KL(x_light_2, x_dark_2) + self.KL(x_dark_2, x_light_2))
 
 
+
+
         # the following is the rest of the original detection pipeline
-        for i, feature in enumerate(features_light[1:]): # starting from output of 16th layer of BRNet
+        for i, feature in enumerate(features_dark[1:]): # starting from output of 16th layer of BRNet
             if i < 3:
                 s = getattr(self, f'L2Normef{i+1}')(feature)
                 pal1_sources.append(s)
 
             elif i == 3:
-                x = feature # 다음 레이어에 통과시키기 위해 복사
                 pal1_sources.append(feature)
 
         # considering extra layers and cache source layer outputs
-                
-
+        x = features_dark[-1]
         for k in range(2):
             x = F.relu(self.extras[k](x), inplace=True)
         of5 = x
@@ -360,27 +360,30 @@ class DSFD_BRNet(nn.Module):
         return output, [R_dark, R_light, R_dark_2, R_light_2], [darklevel_dark, darklevel_light], loss_mutual
 
     def load_weights(self, base_file):
-        other, ext = os.path.splitext(base_file)
-        if ext == '.pkl' or '.pth':
-            print('Loading weights into state dict...')
-            mdata = torch.load(base_file,
-                               map_location=lambda storage, loc: storage)
+        """
+        checkpoint (.pth) 또는 state_dict 모두 안전하게 불러오기
+        """
+        if not os.path.exists(weight_path):
+            raise FileNotFoundError(f"Weight file not found: {weight_path}")
+        
+        print(f"Loading weights from {weight_path}...")
+        checkpoint = torch.load(weight_path, map_location=device)
 
-            # Check if mdata is a checkpoint dictionary or just a state_dict
-            if 'model' in mdata and 'epoch' in mdata:
-                self.load_state_dict(mdata['model'])
-                epoch = mdata['epoch']
-                print(f'Resumed model from epoch {epoch}.')
-            else: # Assuming mdata is just the model's state_dict
-                self.load_state_dict(mdata)
-                epoch = 0 
-                print('Loaded model state_dict. Epoch not found in checkpoint, starting from 0 or pre-set.')
-            print('Finished!')
+        if isinstance(checkpoint, dict) and 'model' in checkpoint:
+            model.load_state_dict(checkpoint['model'], strict=strict)
+            print("Loaded checkpoint with model state_dict.")
+            epoch = checkpoint.get('epoch', 0)
         else:
-            print('Sorry only .pth and .pkl files supported.')
-        return epoch
+            model.load_state_dict(checkpoint, strict=strict)
+            print("Loaded raw state_dict.")
+            epoch = 0
+
+        
+        
+        return model, epoch
+
     def xavier(self, param):
-        nn.init.xavier_uniform(param)
+        nn.init.xavier_uniform_(param)
 
     def weights_init(self, m):
         if isinstance(m, nn.Conv2d):
