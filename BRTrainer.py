@@ -148,7 +148,10 @@ class BR_Trainer:
             R_light_gt, I_light = self.net_enh(images)
 
             # self.model (DSFD_BRNet 인스턴스) 호출
-            out, out2, out3, loss_mutual = self.model(img_dark, images, I_dark.detach(), I_light.detach(), hook_dict = hook_dict) # out2는 R_dark, R_light, R_dark_2, R_light_2
+            if mode == 'train':
+                out, out2, out3, loss_mutual = self.model(img_dark, images, I_dark.detach(), I_light.detach(), hook_dict = hook_dict) # out2는 R_dark, R_light, R_dark_2, R_light_2
+            else:
+                out, out2, out3, loss_mutual = self.model(img_dark, images, I_dark.detach(), I_light.detach(), hook_dict = None)
             R_dark, R_light, R_dark_2, R_light_2 = out2
             dl_dark, dl_light = out3
             
@@ -172,24 +175,28 @@ class BR_Trainer:
                 loss_sort = torch.tensor(0.0).to(self.device)
             else:
                 # hooking한 gradient 가져오기
-                g_light = self.grads.get('light_grad', None)
-                g_dark  = self.grads.get('dark_grad', None)
+                if mode != 'train':
+                    g_light = self.grads.get('light_grad', None)
+                    g_dark  = self.grads.get('dark_grad', None)
 
-                if g_light is not None and g_dark is not None:
+                    if g_light is not None and g_dark is not None:
 
 
-                    g_light_flat = g_light.view(g_light.size(0), -1)
-                    g_dark_flat  = g_dark.view(g_dark.size(0), -1)
+                        g_light_flat = g_light.view(g_light.size(0), -1)
+                        g_dark_flat  = g_dark.view(g_dark.size(0), -1)
 
-                    sort_idx = int(g_light_flat.size(1) / self.cfg.WEIGHT.SORT_RATIO)
+                        sort_idx = int(g_light_flat.size(1) / self.cfg.WEIGHT.SORT_RATIO)
 
-                    g_light_flat_part = g_light_flat[:, :sort_idx]
-                    g_dark_flat_part = g_dark_flat[:, :sort_idx]
+                        g_light_flat_part = g_light_flat[:, :sort_idx]
+                        g_dark_flat_part = g_dark_flat[:, :sort_idx]
 
-                    # ORT loss from "https://github.com/cuiziteng/ICCV_MAET.git" of https://arxiv.org/abs/2205.03346
-                    loss_sort = self.cfg.WEIGHT.SORT * torch.mean(torch.abs(self.ort_func(g_light_flat_part, g_dark_flat_part)))\
-                        + self.cfg.WEIGHT.SORT_M*torch.mean(1 - torch.abs(self.ort_func(g_light_flat_part, g_light_flat_part)))\
-                        + self.cfg.WEIGHT.SORT_M*torch.mean(1 - torch.abs(self.ort_func(g_dark_flat_part, g_dark_flat_part)))
+                        # ORT loss from "https://github.com/cuiziteng/ICCV_MAET.git" of https://arxiv.org/abs/2205.03346
+                        loss_sort = self.cfg.WEIGHT.SORT * torch.mean(torch.abs(self.ort_func(g_light_flat_part, g_dark_flat_part)))\
+                            + self.cfg.WEIGHT.SORT_M*torch.mean(1 - torch.abs(self.ort_func(g_light_flat_part, g_light_flat_part)))\
+                            + self.cfg.WEIGHT.SORT_M*torch.mean(1 - torch.abs(self.ort_func(g_dark_flat_part, g_dark_flat_part)))
+
+                    else:
+                        loss_sort = torch.tensor(0.0).to(self.device)
 
 
                 else:
@@ -278,8 +285,8 @@ class BR_Trainer:
 
 
             # WandB 로깅 (10 iter마다)
-            if self.use_wandb and (batch_idx % 10 == 0 and batch_idx != 0) and self.args.local_rank == 0:
-                wandb.log({
+            if self.use_wandb and (batch_idx % 1 == 0):
+                log_data = {
                     "train/loss_l_pal1": total_loss_l_pal1/batch_num,
                     "train/loss_c_pal1": total_loss_c_pal1/batch_num,
                     "train/loss_l_pal2": total_loss_l_pal2/batch_num,
@@ -291,10 +298,18 @@ class BR_Trainer:
                     "train/loss_sort": total_loss_sort/batch_num,
                     "epoch": epoch,
                     "step": epoch * len(self.train_loader) + batch_num
-                })
+                }
+                
+                if self.args.multigpu:
+                    if (self.args.local_rank == 0):
+                        wandb.log(log_data)
+                else:
+                    wandb.log(log_data)
 
 
-            if batch_idx + 1 == len(self.train_loader):
+
+            #if batch_idx + 1 == len(self.train_loader):
+            if batch_idx  == 0:
                 eval_loss = self.evaluate()
 
                 
@@ -309,8 +324,8 @@ class BR_Trainer:
                     })
             
                 epoch_bar.update(1)
-
-        
+            
+            break
 
         return total_loss / len(self.train_loader)
 
@@ -351,8 +366,8 @@ class BR_Trainer:
 
                 
 
-        if self.use_wandb and self.args.local_rank == 0:
-            wandb.log({
+        if self.use_wandb:
+            log_data = {
                 "val/loss_l_pal1": total_val_loss_l_pal1 / cnt,
                 "val/loss_c_pal1": total_val_loss_c_pal1 / cnt,
                 "val/loss_l_pal2": total_val_loss_l_pal2 / cnt,
@@ -363,29 +378,46 @@ class BR_Trainer:
                 "val/loss_mutual": total_val_loss_mutual / cnt,
                 "val/loss_sort": total_val_loss_sort / cnt,
                 "val/total_loss": total_val_loss / cnt
-            })
+            }
+        
+            if self.args.multigpu:
+                if (self.args.local_rank == 0):
+                    wandb.log(log_data)
+            else:
+                wandb.log(log_data)
 
         return total_val_loss / cnt if cnt > 0 else 0.0 # 평균 손실 반환
 
-    def save_checkpoint(self, epoch):
-        # Move Model to CPU
-        # DDP의 경우 module 속성을 사용하여 모델을 가져옴
-        # 저장할떄 GPU에 올려있는 상태로 저장하면 gpu 정보도 저장되서 크기가 너무 커짐
-        model_state_dict = self.model.module.to('cpu').state_dict() if isinstance(self.model, nn.DataParallel) or isinstance(self.model, nn.parallel.DistributedDataParallel)\
-            else self.model.to('cpu').state_dict()
+    def save_checkpoint(self, epoch, is_best=False):
+        """
+        모델과 옵티마이저 상태를 저장
+
+        Args:
+            epoch (int): 현재 에폭
+            is_best (bool): 성능이 가장 좋을 때만 저장하고 싶을 경우 사용
+        """
+        # get model without DataParallel or DDP wrapper
+        core_model = self.get_core_model()
         
+        # 저장 경로 생성
+        save_name = f"{self.cfg.MODEL_NAME}.pt"
+        save_path = os.path.join(self.checkpoint_dir, save_name)
+
+        # 체크포인트 딕셔너리 구성
         checkpoint = {
-            "model": model_state_dict,
+            "model": core_model.state_dict(),
             "optimizer": self.optim.state_dict(),
             "epoch": epoch
         }
-        torch.save(checkpoint, os.path.join(self.checkpoint_dir, f"{self.cfg.MODEL_NAME}.pt"))
-        
-        # 모델을 원래 device로 다시 옮기기 (학습 계속하기 위해)
-        if isinstance(self.model, nn.DataParallel) or isinstance(self.model, nn.parallel.DistributedDataParallel):
-            self.model.module.to(self.device) # DataParallel/DDP의 경우 원래 모듈을 옮김
-        else:
-            self.model.to(self.device)
+
+        # 저장 (모델은 GPU에 있어도 무방, 파일은 CPU로 저장됨)
+        torch.save(checkpoint, save_path)
+
+        # 성능이 가장 좋을 때 저장하는 별도 버전
+        if is_best:
+            best_path = os.path.join(self.checkpoint_dir, f"{self.cfg.MODEL_NAME}_best.pt")
+            torch.save(checkpoint, best_path)
+
 
     def get_core_model(self):
         if isinstance(self.model, (nn.DataParallel, nn.parallel.DistributedDataParallel)):
@@ -393,17 +425,22 @@ class BR_Trainer:
         return self.model
 
     def train(self):
-        best_loss = -torch.inf  # 초기 최저 손실값 설정
+        self.best_loss = torch.inf  # 초기 최저 손실값 설정
         for epoch in range(self.epochs):
             avg_loss = self.train_epoch(epoch)
 
             
-            if (epoch + 1) % 5 == 0 :
-                self.save_checkpoint(epoch + 1)
+            if avg_loss < self.best_loss:
+                self.best_loss = avg_loss
+                self.save_checkpoint(epoch, is_best=True)
+            else:
+                self.save_checkpoint(epoch)
 
-            if not avg_loss: #train_epoch 메소드가 False를 리턴하면 종료
+            """
+            if not avg_loss : #train_epoch 메소드가 False를 리턴하면 종료
                 print("Current Step exeeds the Maximum Steps")
                 break
+            """
 
         # 학습 완료 후 최종 모델 저장 시에도 CPU로 옮겨서 저장
         if self.args.local_rank == 0: # 메인 프로세스에서만 저장

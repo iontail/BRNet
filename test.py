@@ -202,9 +202,14 @@ def bbox_vote(det_):
 
 def load_models():
     print('build network')
-    net = build_net('test', num_classes=2, model='dark')
+    net = build_net('test', num_classes=2)
     net.eval()
-    net.load_state_dict(torch.load('weights/dark/dsfd.pth')) #### Set the dir of your model weight
+
+    device = torch.device('cuda' if use_cuda else 'cpu')
+    checkpoint = torch.load('weights/dark/BRNet_base.pt', map_location=device) #### Set the dir of your model weight
+
+    # 체크포인트 딕셔너리에서 'model' 키에 해당하는 state_dict를 추출하여 모델에 로드합니다.
+    net.load_state_dict(checkpoint['model'])
 
     if use_cuda:
         net = net.cuda()

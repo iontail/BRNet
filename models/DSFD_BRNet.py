@@ -363,11 +363,11 @@ class DSFD_BRNet(nn.Module):
         """
         checkpoint (.pth) 또는 state_dict 모두 안전하게 불러오기
         """
-        if not os.path.exists(weight_path):
-            raise FileNotFoundError(f"Weight file not found: {weight_path}")
+        if not os.path.exists(base_file):
+            raise FileNotFoundError(f"Weight file not found: {base_file}")
         
-        print(f"Loading weights from {weight_path}...")
-        checkpoint = torch.load(weight_path, map_location=device)
+        print(f"Loading weights from {base_file}...")
+        checkpoint = torch.load(base_file, map_location=device)
 
         if isinstance(checkpoint, dict) and 'model' in checkpoint:
             model.load_state_dict(checkpoint['model'], strict=strict)

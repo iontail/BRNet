@@ -121,10 +121,21 @@ class BRNet(nn.Module):
             x = self.layers[i](x)
         sources += [x]
 
+        """
+
         if hook_dict is not None:
             if 'dark' in hook_dict and not only_disentangle:
                 x.register_hook(hook_dict['dark'])
             if 'light' in hook_dict and only_disentangle:
+                x.register_hook(hook_dict['light'])
+        """
+
+        if hook_dict is not None:
+            if 'dark' in hook_dict and not only_disentangle and x.requires_grad:
+                x.requires_grad_()
+                x.register_hook(hook_dict['dark'])
+            if 'light' in hook_dict and only_disentangle and x.requires_grad:
+                x.requires_grad_()
                 x.register_hook(hook_dict['light'])
 
         
@@ -142,9 +153,7 @@ class BRNet(nn.Module):
             for id in self.stage_id:
                 for i in id:
                     if self.layers[i].__class__.__name__ == 'Photoreceptor_Block':
-                        x = self.layers[i](x, darkness_level = darklevel_mean.detach(), reflectance = ref_mean_average.detach()) #problem: detach?
-                        # use detach to make darklevel/reflectance branch be as independent as possible 
-                        # with photo receptor block
+                        x = self.layers[i](x, darkness_level = darklevel_mean, reflectance = ref_mean_average)
                     else:
                         x = self.layers[i](x)
 
