@@ -212,7 +212,7 @@ class DSFD_BRNet(nn.Module):
 
 
     # during training, the model takes the paired images, and their pseudo GT illumination maps from the Retinex Decom Net
-    def forward(self, x, x_light, I, I_light, hook_dict = None):
+    def forward(self, x, x_light, I, I_light):
         size = x.size()[2:]
         pal1_sources = list()
         pal2_sources = list()
@@ -222,11 +222,11 @@ class DSFD_BRNet(nn.Module):
         conf_pal2 = list()
 
         # 밝은 이미지 통과
-        features_light, darklevel_light, R_light, _ = self.brnet(x_light, only_disentangle = True, hook_dict = hook_dict) 
+        features_light, darklevel_light, R_light, _ = self.brnet(x_light, only_disentangle = True) 
         x_light = features_light[0]
 
         # 어두운 이미지 통과
-        features_dark, darklevel_dark, R_dark, _ = self.brnet(x, only_disentangle = False, hook_dict = hook_dict) # 모든 레이어 통과
+        features_dark, darklevel_dark, R_dark, _ = self.brnet(x, only_disentangle = False) # 모든 레이어 통과
         x_dark = features_dark[0]
     
 
@@ -370,17 +370,17 @@ class DSFD_BRNet(nn.Module):
         checkpoint = torch.load(base_file, map_location=device)
 
         if isinstance(checkpoint, dict) and 'model' in checkpoint:
-            model.load_state_dict(checkpoint['model'], strict=strict)
+            self.model.load_state_dict(checkpoint['model'], strict=self.strict)
             print("Loaded checkpoint with model state_dict.")
             epoch = checkpoint.get('epoch', 0)
         else:
-            model.load_state_dict(checkpoint, strict=strict)
+            self.model.load_state_dict(checkpoint, strict=self.strict)
             print("Loaded raw state_dict.")
             epoch = 0
 
         
         
-        return model, epoch
+        return self.model, epoch
 
     def xavier(self, param):
         nn.init.xavier_uniform_(param)

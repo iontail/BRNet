@@ -14,12 +14,13 @@ import transformers
 from transformers import TrainingArguments
 
 
-from arguments import config
+from arguments import argument_parser
 from models.data.config import cfg
 from models.data.widerface import WIDERDetection, detection_collate
 from models.factory import build_net
 from models.modules.enhancer import RetinexNet
 from BRTrainer import BR_Trainer_v2 as BRTrainer
+
 
 def set_seed(seed):
     torch.manual_seed(seed)
@@ -112,5 +113,5 @@ def main(args):
     
 
 if __name__ == '__main__':
-    config = config()
-    main(config)
+    arguments = argument_parser()
+    main(arguments)

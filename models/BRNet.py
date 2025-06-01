@@ -102,7 +102,7 @@ class BRNet(nn.Module):
     
 
 
-    def forward(self, x, only_disentangle = False, hook_dict = None):
+    def forward(self, x, only_disentangle = False):
         """
         Args:
             x : input image (B, C, H, W)
@@ -120,23 +120,6 @@ class BRNet(nn.Module):
         for i in range(7):
             x = self.layers[i](x)
         sources += [x]
-
-        """
-
-        if hook_dict is not None:
-            if 'dark' in hook_dict and not only_disentangle:
-                x.register_hook(hook_dict['dark'])
-            if 'light' in hook_dict and only_disentangle:
-                x.register_hook(hook_dict['light'])
-        """
-
-        if hook_dict is not None:
-            if 'dark' in hook_dict and not only_disentangle and x.requires_grad:
-                x.requires_grad_()
-                x.register_hook(hook_dict['dark'])
-            if 'light' in hook_dict and only_disentangle and x.requires_grad:
-                x.requires_grad_()
-                x.register_hook(hook_dict['light'])
 
         
         darklevel = self.dark(x) # (B, 1, H, W)
