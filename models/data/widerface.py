@@ -129,10 +129,14 @@ def detection_collate(batch):
         tgs.append(torch.as_tensor(tgt))
         dls.append(dl)              # 스칼라 tensor
         paths.append(p)
-    return (torch.stack(imgs, 0),      # B×C×H×W
-            tgs,                       # list-of-tensor (가변 길이)
-            torch.stack(dls, 0),       # B×1
-            paths)
+
+    # return by dictionary
+    return {
+        'images': torch.stack(imgs, 0),      # B×C×H×W
+        'targets': tgs,                       # list-of-tensor (가변 길이)
+        'darklevels': torch.stack(dls, 0),    # B×1
+        'paths': paths                        # list-of-string
+    }
 
 if __name__ == '__main__':
     from config import cfg
