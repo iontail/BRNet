@@ -18,9 +18,11 @@ from models.factory import build_net
 from torchvision.utils import make_grid
 import glob
 
-use_cuda = torch.cuda.is_available()
+from safetensors.torch import load_file
 
-if use_cuda:
+use_cuda = "cuda" if torch.cuda.is_available() else "cpu"
+
+if torch.cuda.is_available():
     torch.set_default_tensor_type('torch.cuda.FloatTensor')
     cudnn.benckmark = True
 else:
@@ -205,15 +207,14 @@ def load_models():
     net = build_net('test', num_classes=2)
     net.eval()
 
-    device = torch.device('cuda' if use_cuda else 'cpu')
-    checkpoint = torch.load('weights/dark/BRNet_base.pt', map_location=device) #### Set the dir of your model weight
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    # safetensors에서 바로 state_dict 로드
+    state_dict = load_file('/root/BRNet/weights/checkpoint-10/model.safetensors', device=device)
+    net.load_state_dict(state_dict)
 
-    # 체크포인트 딕셔너리에서 'model' 키에 해당하는 state_dict를 추출하여 모델에 로드합니다.
-    net.load_state_dict(checkpoint['model'])
-
-    if use_cuda:
-        net = net.cuda()
-
+    net.to(device)
+    
     return net
 
 

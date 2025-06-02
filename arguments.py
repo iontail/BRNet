@@ -7,6 +7,7 @@ def argument_parser():
     parser.add_argument('--model', default='dark', type=str, choices=['dark', 'vgg', 'resnet50', 'resnet101', 'resnet152'], help='Model for training')
     parser.add_argument('--resume', default=None, type=str, help='Checkpoint state_dict file to resume training from')
     parser.add_argument('--num_workers', default=4, type=int, help='Number of workers used in dataloading')
+    parser.add_argument('--num_epochs', default=100, type=int, help='Number of Epoch')
     parser.add_argument('--cuda', default=True, type=bool, help='Use CUDA to train model')
     parser.add_argument('--lr', '--learning-rate', default=5e-4, type=float, help='Initial learning rate')
     parser.add_argument('--momentum', default=0.9, type=float, help='Momentum value for optim')

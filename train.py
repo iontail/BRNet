@@ -51,6 +51,8 @@ def main(args):
     net = build_net("train", cfg.NUM_CLASSES)
     net_enh = RetinexNet()
     net_enh.load_state_dict(torch.load(args.save_folder + 'decomp.pth'))
+    net_enh.to(device)
+
 
     net.extras.apply(net.weights_init)
     net.fpn_topdown.apply(net.weights_init)
@@ -88,10 +90,10 @@ def main(args):
         weight_decay=args.weight_decay,
         logging_dir=args.save_folder + 'logs',
         logging_steps=10,
-        evaluation_strategy="steps",
-        eval_steps=1000,
+        eval_strategy="steps",
+        eval_steps=10,
         save_strategy="steps",
-        save_steps=1000,
+        save_steps=10,
         load_best_model_at_end=True,
         metric_for_best_model="loss",
     )
@@ -99,12 +101,12 @@ def main(args):
     trainer = BRTrainer(
         model=net,
         net_enh=net_enh,
+        custom_optimizer = optimizer,
         args=training_args,
         train_dataset=train_dataset,
-        val_dataset=val_dataset,
-        data_collator=data_collator,
-        optimizer=optimizer,
-        device=device
+        eval_dataset=val_dataset,
+        data_collator = data_collator,
+        use_wandb=args.use_wandb
     )
 
     trainer.train()

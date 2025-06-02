@@ -24,35 +24,44 @@ def adjust_learning_rate(optimizer, gamma, step):
         param_group['lr'] = param_group['lr'] * gamma
 
 class BR_Trainer_v2(Trainer):
-    def __init__(self, net_enh=None, **kwds):
+    def __init__(self, net_enh=None, custom_optimizer=None, use_wandb = False, **kwds):
         super().__init__(**kwds)
         self.net_enh = net_enh
+        self.custom_optimizer = custom_optimizer
         self.cfg = cfg
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.use_wandb = use_wandb
 
-        self.criterion = MultiBoxLoss(cfg, self.args.cuda)
+        self.criterion = MultiBoxLoss(cfg, self.device)
         self.criterion_enhance = EnhanceLoss()
         self.criterion_dark = nn.MSELoss()
 
         # define for our new semi-orthogonal regularity loss
         self.ort_func = nn.CosineSimilarity(dim=1, eps=1e-8)
         
+        
 
-
+    def create_optimizer(self):
+        if self.custom_optimizer is not None:
+            self.optimizer = self.custom_optimizer
+            return self.optimizer
+        else:
+            return super().create_optimizer()
         
     def compute_loss(self, model, inputs, num_items_in_batch = None, return_outputs=False):
-        image = inputs['image']
-        label = inputs['label']
-        darklevel = inputs['darklevel']
-        img_path = inputs['img_path']
+        image = inputs['images']
+        label = inputs['targets']
+        darklevel = inputs['darklevels']
+        img_path = inputs['paths']
         
         
         image = image.to(self.device) / 255.0
         img_dark = torch.empty_like(image).to(self.device)
         detection_targets = [cls.to(self.device) for cls in label]
-        # Forward pass
-        output = model(image)
+
         # Compute loss
-        loss = self.get_loss_fn(model, self.net_enh, image, img_dark, darklevel, detection_targets, mode='train')
+        mode = "train" if model.training else "eval"
+        output, loss = self.get_loss_fn(model, self.net_enh, image, img_dark, darklevel, detection_targets, mode = mode)
 
         if return_outputs:
             return loss, output, label
@@ -92,10 +101,8 @@ class BR_Trainer_v2(Trainer):
         R_light_gt, I_light = self.net_enh(images)
 
         # self.model (DSFD_BRNet 인스턴스) 호출
-        if mode == 'train':
-            out, out2, out3, loss_mutual, loss_sort = self.model(img_dark, images, I_dark.detach(), I_light.detach()) # out2는 R_dark, R_light, R_dark_2, R_light_2
-        else:
-            out, out2, out3, loss_mutual, loss_sort = self.model(img_dark, images, I_dark.detach(), I_light.detach())
+        out, out2, out3, loss_mutual, loss_sort = self.model(img_dark, images, I_dark.detach(), I_light.detach()) # out2는 R_dark, R_light, R_dark_2, R_light_2
+
         R_dark, R_light, R_dark_2, R_light_2 = out2
         dl_dark, dl_light = out3
         
@@ -114,24 +121,39 @@ class BR_Trainer_v2(Trainer):
 
     
 
-        if self.args.use_wandb:
-            wandb.log({
-                'loss_l_pal1': loss_l_pal1.item(),
-                'loss_c_pal1': loss_c_pal1.item(),
-                'loss_l_pal2': loss_l_pal2.item(),
-                'loss_c_pal2': loss_c_pal2.item(),
-                'loss_enhance': loss_enhance.item(),
-                'loss_enhance2': loss_enhance2.item(),
-                'loss_darklevel': loss_darklevel.item(),
-                'loss_mutual': loss_mutual.item(),
-                'loss_sort': loss_sort.item(),
-            })
+        if self.use_wandb:
+            if mode == "train":
+                wandb.log({
+                    'train/loss_l_pal1': loss_l_pal1.item(),
+                    'train/loss_c_pal1': loss_c_pal1.item(),
+                    'train/loss_l_pal2': loss_l_pal2.item(),
+                    'train/loss_c_pal2': loss_c_pal2.item(),
+                    'train/loss_enhance': loss_enhance.item(),
+                    'train/loss_enhance2': loss_enhance2.item(),
+                    'train/loss_darklevel': loss_darklevel.item(),
+                    'train/loss_mutual': loss_mutual.item(),
+                    'train/loss_sort': loss_sort.item(),
+                })
+            else:
+                wandb.log({
+                    'val/loss_l_pal1': loss_l_pal1.item(),
+                    'val/loss_c_pal1': loss_c_pal1.item(),
+                    'val/loss_l_pal2': loss_l_pal2.item(),
+                    'val/loss_c_pal2': loss_c_pal2.item(),
+                    'val/loss_enhance': loss_enhance.item(),
+                    'val/loss_enhance2': loss_enhance2.item(),
+                    'val/loss_darklevel': loss_darklevel.item(),
+                    'val/loss_mutual': loss_mutual.item(),
+                    'val/loss_sort': loss_sort.item(),
+                })
+
+
             
 
         loss = loss_l_pal1 + loss_c_pal1 + loss_l_pal2 + loss_c_pal2 + loss_enhance2 + loss_enhance \
             + loss_darklevel + loss_mutual + loss_sort
         
-        return loss
+        return out, loss
 
     def prediction_step(
             self,
@@ -144,6 +166,6 @@ class BR_Trainer_v2(Trainer):
         model.eval()
         
         with torch.no_grad():
-            val_loss, pred, label = self.compute_loss(model,inputs,return_outputs = True)
+            eval_loss, pred, label = self.compute_loss(model,inputs,return_outputs = True)
         
-        return (val_loss,pred,label)
+        return (eval_loss,pred,label)

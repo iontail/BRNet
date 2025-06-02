@@ -14,7 +14,7 @@ class GainBlock(nn.Module):
 
         self.in_dim = in_dim
         self.h_dim = h_dim
-        self.activation = str_to_act[activation]
+        
 
         # problems: 왜 중간에 차원을 4로 줄이지?
         # to reduce the number of parameters
@@ -22,7 +22,7 @@ class GainBlock(nn.Module):
         self.layers = nn.Sequential(
             nn.AdaptiveAvgPool2d(1),
             nn.Conv2d(self.in_dim, self.h_dim // 4, 1),
-            self.activation,
+            nn.ReLU(),
             nn.Conv2d(self.h_dim // 4, self.h_dim, 1),
             nn.Sigmoid()
         )
@@ -41,10 +41,9 @@ class ReflectiveFeedback(nn.Module):
     def __init__(self, h_dim, activation = 'relu'):
         super(ReflectiveFeedback, self).__init__()
         self.h_dim = h_dim
-        self.activation = str_to_act[activation]
         self.layers = nn.Sequential(
             nn.Conv2d(1, h_dim, kernel_size = 1),
-            self.activation
+            nn.ReLU()
         )
 
     def forward(self, x, reflectance = None):
@@ -83,9 +82,6 @@ class Rod_Block(nn.Module):
         self.downsample = downsample
         self.cfg = cfg
 
-        self.bn1 = str_to_norm[normalize](in_dim)
-        self.bn2 = str_to_norm[normalize](out_dim)
-
 
         self.gain = GainBlock(in_dim, in_dim, activation = self.activation)
         self.tapetum = ReflectiveFeedback(in_dim, activation = self.activation) # problems: mid_dim??
@@ -99,14 +95,13 @@ class Rod_Block(nn.Module):
         See https://arxiv.org/abs/2211.05778 for more details
         """
         self.dcn = opsm.DCNv3_pytorch(in_dim, kernel_size = 3, pad = 1, stride = 1)
-        self.conv = nn.Conv2d(in_dim, out_dim, kernel_size = 1, padding = 0) 
 
         self.layers = nn.Sequential(
-            self.bn1,
-            str_to_act[self.activation],
-            self.conv,
-            self.bn2,
-            str_to_act[self.activation]
+            nn.BatchNorm2d(in_dim),
+            nn.ReLU(),
+            nn.Conv2d(in_dim, out_dim, kernel_size = 1, padding = 0),
+            nn.BatchNorm2d(out_dim),
+            nn.ReLU()
         )
 
         # not use spatial gating
@@ -167,17 +162,13 @@ class Cone_Block(nn.Module):
         self.activation = activation
         self.down = down
 
-        self.bn1= str_to_norm[normalize](out_dim)
-        self.bn2= str_to_norm[normalize](out_dim)
-        self.activation = str_to_act[activation]
-
         self.layers = nn.Sequential(
             nn.Conv2d(in_dim, out_dim, kernel_size = 1, padding = 0),
-            self.bn1,
-            self.activation,
+            nn.BatchNorm2d(out_dim),
+            nn.ReLU(),
             nn.Conv2d(out_dim, out_dim, kernel_size = 3, padding = 1),
-            self.bn2,
-            self.activation
+            nn.BatchNorm2d(out_dim),
+            nn.ReLU()
         )
 
 
