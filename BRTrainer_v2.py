@@ -23,7 +23,7 @@ def adjust_learning_rate(optimizer, gamma, step):
     for param_group in optimizer.param_groups:
         param_group['lr'] = param_group['lr'] * gamma
 
-class BRTrainer(Trainer):
+class BR_Trainer_v2(Trainer):
     def __init__(self, net_enh=None, **kwds):
         super().__init__(**kwds)
         self.net_enh = net_enh
