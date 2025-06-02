@@ -91,9 +91,9 @@ def main(args):
         logging_dir=args.save_folder + 'logs',
         logging_steps=10,
         eval_strategy="steps",
-        eval_steps=10,
+        eval_steps=1000,
         save_strategy="steps",
-        save_steps=10,
+        save_steps=1000,
         load_best_model_at_end=True,
         metric_for_best_model="loss",
     )
