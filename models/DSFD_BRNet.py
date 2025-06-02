@@ -61,20 +61,7 @@ class DSFD_BRNet(nn.Module):
         self.loc_pal2 = nn.ModuleList(head2[0])
         self.conf_pal2 = nn.ModuleList(head2[1])
 
-        
-
-        ##############################
-        # self.ref를 두 개로 나눠서 1024로 projection 시키고 semi-orthogonal loss 주기 위해서 loss 계산
-        # 그리고 3 channel로 projection 해야 할 듯
-        # 1. 문제는 이렇게 하면 loss를 마지막 레이어(conv7)의 output에 주는데, DSFD는 각 레이어의 feature에서 detection을 실행하게 되는데
-        # 한 곳에만 Loss를 주게되면 문제점이 있지 않을까?
-        # 2. 그리고 1st PAL과 2nd PAL 중에서 어는 PAL의 마지막 아웃풋에 loss를 적용해주어야 할까?
-        # small object가 중요하면 1st PAL에 적용
-        # "t low-level features are more suitable for small faces, we assign smaller anchor sizes in the first shot, 
-        # and use larger sizes in the second shot." from DSFD - https://arxiv.org/pdf/1512.02325.pdf'
-        ##############################
-        # the reflectance decoding branch
-        
+        self.ort_func = nn.CosineSimilarity(dim=1, eps=1e-8)
         
 
         self.KL = DistillKL(T=4.0)
