@@ -308,6 +308,30 @@ class DSFD_BRNet(nn.Module):
         ef5 = self.fpn_fem[4](conv6)
         ef6 = self.fpn_fem[5](conv7)
 
+
+        if self.cfg.ABLATION.SORT: # we use indirect feature level orthogonal loss rather than gradient level
+           encoder_feat = F.adaptive_avg_pool2d(features_dark[0], output_size=(1, 1))
+           decoder_feat = F.adaptive_avg_pool2d(conv3, output_size=(1, 1))
+
+        
+           encoder_feat = encoder_feat.view(encoder_feat.size(0), -1).detach()
+           decoder_feat = decoder_feat.view(decoder_feat.size(0), -1).detach()
+
+           # extract the features to the minimum dimension between encoder and decoder
+           # (Encoder has low dimension)
+           min_dim = min(encoder_feat.size(1), decoder_feat.size(1))
+           encoder_feat = encoder_feat[:, :min_dim]
+           decoder_feat = decoder_feat[:, :min_dim]
+
+           # ortogonal loss 
+           loss_sort = (
+               self.cfg.WEIGHT.SORT * torch.mean(torch.abs(self.ort_func(encoder_feat, decoder_feat))) +
+               self.cfg.WEIGHT.SORT_M * torch.mean(1 - torch.abs(self.ort_func(encoder_feat, encoder_feat))) +
+               self.cfg.WEIGHT.SORT_M * torch.mean(1 - torch.abs(self.ort_func(decoder_feat, decoder_feat)))
+            )
+        else:
+            loss_sort = torch.tensor(0.0).to(self.device)
+
         pal2_sources = (ef1, ef2, ef3, ef4, ef5, ef6)
         for (x, l, c) in zip(pal1_sources, self.loc_pal1, self.conf_pal1): # -> (B, H, W, C)
             loc_pal1.append(l(x).permute(0, 2, 3, 1).contiguous())
@@ -357,7 +381,9 @@ class DSFD_BRNet(nn.Module):
                 self.priors_pal2)
 
         # packing the outputs from the reflectance decoder:
-        return output, [R_dark, R_light, R_dark_2, R_light_2], [darklevel_dark, darklevel_light], loss_mutual
+        return output, [R_dark, R_light, R_dark_2, R_light_2], [darklevel_dark, darklevel_light], loss_mutual, loss_sort
+    
+    
 
     def load_weights(self, base_file):
         """
@@ -381,6 +407,7 @@ class DSFD_BRNet(nn.Module):
         
         
         return self.model, epoch
+    
 
     def xavier(self, param):
         nn.init.xavier_uniform_(param)

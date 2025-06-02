@@ -93,9 +93,9 @@ class BRTrainer(Trainer):
 
         # self.model (DSFD_BRNet 인스턴스) 호출
         if mode == 'train':
-            out, out2, out3, loss_mutual = self.model(img_dark, images, I_dark.detach(), I_light.detach()) # out2는 R_dark, R_light, R_dark_2, R_light_2
+            out, out2, out3, loss_mutual, loss_sort = self.model(img_dark, images, I_dark.detach(), I_light.detach()) # out2는 R_dark, R_light, R_dark_2, R_light_2
         else:
-            out, out2, out3, loss_mutual = self.model(img_dark, images, I_dark.detach(), I_light.detach())
+            out, out2, out3, loss_mutual, loss_sort = self.model(img_dark, images, I_dark.detach(), I_light.detach())
         R_dark, R_light, R_dark_2, R_light_2 = out2
         dl_dark, dl_light = out3
         
@@ -113,19 +113,6 @@ class BRTrainer(Trainer):
         loss_darklevel = (loss_darklevel_dark + loss_darklevel_light ) * self.cfg.WEIGHT.DL
 
     
-        if self.cfg.ABLATION.SORT: # we use indirect feature level orthogonal loss rather than gradient level
-            g_dark = R_dark.view(R_dark.size(0), -1).detach()
-            g_light = R_light.view(R_light.size(0), -1).detach()
-
-            sort_idx = int(g_dark.size(1) * self.cfg.WEIGHT.SORT_RATIO)
-            g_dark_part = g_dark[:, :sort_idx]
-            g_light_part = g_light[:, :sort_idx]
-
-            loss_sort = self.cfg.WEIGHT.SORT * torch.mean(torch.abs(self.ort_func(g_light_part, g_dark_part))) \
-                      + self.cfg.WEIGHT.SORT_M * torch.mean(1 - torch.abs(self.ort_func(g_light_part, g_light_part))) \
-                      + self.cfg.WEIGHT.SORT_M * torch.mean(1 - torch.abs(self.ort_func(g_dark_part, g_dark_part)))
-        else:
-            loss_sort = torch.tensor(0.0).to(self.device)
 
         if self.args.use_wandb:
             wandb.log({
