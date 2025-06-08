@@ -3,3 +3,5 @@ dataset/
 weights/
 result/
 output_images/
+!dataset/**/*.txt
+!dataset/*.txt
