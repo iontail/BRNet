@@ -2,6 +2,7 @@ __pycache__
 dataset/
 weights/
 result/
+wandb/
 output_images/
 !dataset/**/*.txt
 !dataset/*.txt

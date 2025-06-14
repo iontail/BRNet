@@ -4,6 +4,7 @@ from __future__ import division
 from __future__ import absolute_import
 from __future__ import print_function
 
+
 import os
 import cv2
 import numpy as np
@@ -13,12 +14,14 @@ from pathlib import Path
 import torch
 from torch.autograd import Variable
 import torch.backends.cudnn as cudnn
+from safetensors.torch import load_model
 
 from models.factory import build_net
 from torchvision.utils import make_grid
 import glob
 
 from safetensors.torch import load_file
+from check_mAP import pred
 
 use_cuda = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -201,19 +204,15 @@ def bbox_vote(det_):
     dets_ = dets_[0:750, :]
     return dets_
 
-
 def load_models():
     print('build network')
     net = build_net('test', num_classes=2)
-    net.eval()
-
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     
     # safetensors에서 바로 state_dict 로드
-    state_dict = load_file('/root/BRNet/weights/checkpoint-10/model.safetensors', device=device)
-    net.load_state_dict(state_dict)
-
+    load_model(net, f"/root/BRNet/weights/checkpoint-304000/model.safetensors")
     net.to(device)
+    net.eval()
     
     return net
 
@@ -232,18 +231,41 @@ if __name__ == '__main__':
     save_path = './result/'
 
     def load_images():
-      imglist = glob.glob('dataset/track1.2_test_sample/*.png') # Set the dir of your test data
-      return imglist
+        directory = '/root/BRNet/dataset/WiderFace/WIDER_val/images'
+        if not os.path.isdir(directory):
+            raise FileNotFoundError(f"Directory not found: {directory}")
+
+        # **로 하위 폴더까지, recursive=True 필수
+        imglist = glob.glob(os.path.join(directory, '**', '*.jpg'), recursive=True)
+
+        return imglist
+    
+    def load_gt_lines(filepath):
+        """
+        지정된 txt 파일을 한 줄씩 읽어서 strip 처리한 후 리스트로 반환합니다.
+        """
+        with open(filepath, 'r', encoding='utf-8') as f:
+            lines = [line.strip() for line in f if line.strip()]  # 빈 줄은 건너뜁니다.
+        return lines
 
     ''' Main Test '''
 
     net = load_models()
     img_list = load_images()
 
+    # 사용 예
+    gt = load_gt_lines('/root/BRNet/dataset/wider_face_val.txt')
+    print(f"Loaded {len(gt)} lines.")
+    print(f"Found {len(img_list)} images.")
+    
+    gt.sort()
+    img_list.sort()
+
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     now = 0
     print('Processing: {}/{}'.format(now+1, img_list.__len__()))
+    breakpoint()
     for img_path in img_list:
         # Load images       
         image = Image.open(img_path)

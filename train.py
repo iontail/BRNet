@@ -94,6 +94,7 @@ def main(args):
         eval_steps=1000,
         save_strategy="steps",
         save_steps=1000,
+        save_total_limit=2,
         load_best_model_at_end=True,
         metric_for_best_model="loss",
     )
@@ -110,6 +111,7 @@ def main(args):
     )
 
     trainer.train()
+    trainer.save_model(os.path.join(args.save_folder, "best_model"))
 
 
     
