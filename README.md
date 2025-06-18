@@ -9,18 +9,24 @@
     ·
     <a>Jinwoong Jung<sup>2</sup></a>
   </p>
+  <p align="center">
+    <i>Sungkyunkwan University · Department of Applied Artificial Intelligence</i><br>
+    <i>2025-1 Undergraduate Research Program (URP)</i>
+  </p>
 </p>
 
 
 ## :sparkles: Bio-Receptor Network (BRNet)
-Sungkyunkwan University Applied Arificial Intelligence
 
-2025-1 Undergraduate Research Program (URP)
 
+## 📄 [Paper](https://drive.google.com/file/d/121UTjugoAJgbZUPCxr5GYTC4QmHdAWBZ/view?usp=sharing)
+
+### 🖼️ Model Overview
 ![overview](./assets/BRNet.png)
 
-## 🔨 The code is not completed! 
-### The instructions below are just toy ones.
+## 🚧 Experiment Not Conducted  
+Although the model architecture is implemented, **full-scale experiments have not been conducted due to limited computational resources**.  
+This repository currently focuses on the model structure and core ideas; training and evaluation scripts are included for reference but not yet tested end-to-end.
 
 ## :wrench: Installation
 
