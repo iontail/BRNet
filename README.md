@@ -24,9 +24,20 @@
 ### 🖼️ Model Overview
 ![overview](./assets/BRNet.png)
 
+---
+
+## 📝 Abstract
+
+Visual recognition in low-light environments remains a challenging task, as detectors trained on well-lit data often fail under poor visibility, low contrast, and severe illumination shifts. To overcome this, we present BRNet, a biologically inspired detector that adaptively modulates feature extraction in response to ambient brightness. The core component of BRNet is the Photo Receptor module, which emulates retinal rod and cone cells to adaptively extract contrast-sensitive or semantic features depending on brightness levels. We derive a luminance-based dark-level estimation function grounded in mesopic vision theory to pseudo-label brightness levels, guiding the dynamic activation of the Rod and Cone pathways. To prevent interference between detection and auxiliary tasks such as reflectance and darkness prediction, we introduce a Semi Orthogonal Loss that selectively decorrelates overlapping feature subspaces while preserving shared semantics. BRNet achieves strong generalization on DARK FACE and ExDark under a zero-shot day-to-night adaptation setting, without requiring image enhancement or retraining.
+
+
+---
+
 ## 🚧 Experiment Not Conducted  
 Although the model architecture is implemented, **full-scale experiments have not been conducted due to limited computational resources**.  
 This repository currently focuses on the model structure and core ideas; training and evaluation scripts are included for reference but not yet tested end-to-end.
+
+
 
 ## :wrench: Installation
 
