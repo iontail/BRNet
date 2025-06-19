@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">Darkness Adaptive Activation: Object Detection with Zero-Shot Domain Adaptation</h1>
+  <h1 align="center">BRNet: a Bio-Receptor Network for Object Detection with Zero-Shot Domain</h1>
   <p align="center">
     <a>Chanhee Lee<sup>1</sup></a>
     ·
@@ -14,9 +14,6 @@
     <i>2025-1 Undergraduate Research Program (URP)</i>
   </p>
 </p>
-
-
-## :sparkles: Bio-Receptor Network (BRNet)
 
 
 ## 📄 [Paper](https://drive.google.com/file/d/1n-AqtfGnrqwQV2c3ZeY5GV9oG4chOsHr/view?usp=drive_link)
