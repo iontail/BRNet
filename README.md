@@ -19,7 +19,7 @@
 ## :sparkles: Bio-Receptor Network (BRNet)
 
 
-## 📄 [Paper](https://drive.google.com/file/d/121UTjugoAJgbZUPCxr5GYTC4QmHdAWBZ/view?usp=sharing)
+## 📄 [Paper](https://drive.google.com/file/d/1n-AqtfGnrqwQV2c3ZeY5GV9oG4chOsHr/view?usp=drive_link)
 
 ### 🖼️ Model Overview
 ![overview](./assets/BRNet.png)
