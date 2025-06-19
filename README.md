@@ -8,10 +8,15 @@
     <a>Yeonhoo Jung<sup>2</sup></a>
     ·
     <a>Jinwoong Jung<sup>2</sup></a>
+    ·
+    <a>Jaekwang Kim<sup>†</sup></a>
   </p>
   <p align="center">
     <i>Sungkyunkwan University · Department of Applied Artificial Intelligence</i><br>
     <i>2025-1 Undergraduate Research Program (URP)</i>
+  </p>
+  <p align="center">
+    <small><sup>†</sup>Corresponding author: jaekwang@g.skku.edu</small>
   </p>
 </p>
 
