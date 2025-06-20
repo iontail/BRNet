@@ -1,5 +1,5 @@
 <p align="center">
-  <h1 align="center">BRNet: a Bio-Receptor Network for Object Detection with Zero-Shot Domain</h1>
+  <h1 align="center">BRNet: a Bio-Receptor Networks for Object Detection with Zero-Shot Domain</h1>
   <p align="center">
     <a>Chanhee Lee<sup>1</sup></a>
     ·
@@ -16,7 +16,7 @@
     <i>2025-1 Undergraduate Research Program (URP)</i>
   </p>
   <p align="center">
-    <small><sup>†</sup>Corresponding author: jaekwang@g.skku.edu</small>
+    <small><sup>†</sup>Corresponding author: Jaekwang Kim - linux@skku.edu</small>
   </p>
 </p>
 
